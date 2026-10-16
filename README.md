@@ -50,6 +50,8 @@ Zawiadomienia i sprawozdania funduszy podają liczbę akcji, a nie kwotę. Dlate
 - **art69** – zawiadomienia o przekroczeniu progów 5/10/15/20/25/33/50/75/90% i zmianach dużych pakietów. Dokładne liczby akcji „przed” i „po” z formularza KNF w PDF. Data = data rozliczenia transakcji.
 - **mar** – transakcje zarządu i rady nadzorczej, z ceną i wolumenem.
 - **fundusze** – zmiany w portfelach OFE/TFI/DFE (dane z ich sprawozdań, także poniżej 5%). Data to dzień sprawozdania (koniec kwartału/półrocza/roku), więc te kwoty skupiają się w tygodniach kończących okresy sprawozdawcze.
+  - **Historia OFE (od 31.12.2024)** pochodzi z oficjalnych struktur aktywów wszystkich 8 OFE. Roczna struktura (31.12) zawiera pełną listę spółek, półroczna (30.06) tylko większe pozycje. Pliki są pobierane z archiwum dokumenty.analizy.pl. Struktury podają wartość w zł, więc liczba akcji to wartość / kurs zamknięcia z ostatniej sesji (archiwum notowań gpw.pl). Podział akcji (split) jest rozpoznawany po jednodniowym skoku kursu. Spółka, która zniknęła z rocznej struktury, liczy się jako sprzedana w całości. Nowe struktury sprawdzane są przy cotygodniowym pobieraniu, a ręcznie uruchomisz je poleceniem `python -m gpwt.collect --ofe`.
+  - Portfele TFI z historią są w Biznesradar tylko w płatnym BR Premium, więc aplikacja ich nie pobiera.
 - **akcjonariat** – zmiany wśród głównych akcjonariuszy między cotygodniowymi odczytami. Zmiany już opisane w zawiadomieniu art. 69 są automatycznie oznaczane jako duplikat i nie liczą się podwójnie.
 - **wz** – listy z walnych zgromadzeń (najmniej dokładne, domyślnie wyłączone w widoku Inwestorzy).
 
@@ -69,6 +71,7 @@ app.py                 serwer (Flask) i API
 gpwt/collect.py        zbieranie danych (python -m gpwt.collect [--weekly] [--limit N])
 gpwt/biznesradar.py    parsery stron
 gpwt/gpwpl.py          archiwum komunikatów z gpw.pl i newconnect.pl (uzupełnianie historii)
+gpwt/ofe.py            struktury portfeli OFE (roczne/półroczne) -> stany posiadania funduszy
 gpwt/espi.py           klasyfikacja komunikatów i odczyt formularzy art. 69 / MAR / WZ
 gpwt/flows.py          zmiany stanu posiadania, wycena, sumy tygodniowe/miesięczne
 gpwt/config.py         ustawienia (przerwy między zapytaniami, godziny, port)

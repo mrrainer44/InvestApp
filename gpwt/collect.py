@@ -14,7 +14,7 @@ import traceback
 from datetime import date, datetime, timedelta
 
 from . import biznesradar as br
-from . import db, espi, flows, gpwpl, http
+from . import db, espi, flows, gpwpl, http, ofe
 from .config import (ESPI_FIRST_RUN_PAGES, ESPI_MAX_PAGES, LOG_DIR, MARKETS, MAX_PDF_BYTES,
                      PDF_CACHE, RATIOS)
 from .util import norm_company, norm_investor
@@ -303,19 +303,19 @@ def store_wz_snapshots(con):
     con.commit()
 
 
-def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None):
+def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, ofe_only=False):
     setup_logging()
     db.init()
     stats = {}
     con = db.connect()
-    run_id = con.execute("INSERT INTO runs(started, kind, status) VALUES(?,?,?)",
-                         (now(), "backfill" if since else ("weekly" if weekly else "daily"), "running")).lastrowid
+    kind = "ofe" if ofe_only else "backfill" if since else ("weekly" if weekly else "daily")
+    run_id = con.execute("INSERT INTO runs(started, kind, status) VALUES(?,?,?)", (now(), kind, "running")).lastrowid
     con.commit()
     status = "ok"
     try:
-        if not since:
+        if not since and not ofe_only:
             collect_market_tables(con, stats)
-        if not skip_espi:
+        if not skip_espi and not ofe_only:
             collect_espi(con, stats, max_pages=max_pages or (500 if since else None), since=since)
             if since:
                 collect_gpw_history(con, stats, since)
@@ -323,8 +323,10 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None):
             store_wz_snapshots(con)
         last_weekly = con.execute("SELECT value FROM settings WHERE key='last_weekly'").fetchone()
         due = not last_weekly or (date.today() - date.fromisoformat(last_weekly[0])).days >= 6
-        if weekly or due or limit:
+        if (weekly or due or limit) and not ofe_only:
             collect_companies(con, stats, limit)
+        if weekly or due or since or ofe_only:
+            ofe.collect(con, stats)
         log.info("[4/4] Liczę zmiany stanu posiadania i ich wartość...")
         stats.update(flows.rebuild_changes(con))
         stats.update(flows.fill_prices(con))
@@ -350,6 +352,9 @@ if __name__ == "__main__":
                      help="jednorazowe historyczne uzupełnienie komunikatów ESPI (art.69/MAR/wezwania/WZ) "
                           "wstecz do tej daty, np. --since 2026-01-01")
     ap.add_argument("--max-pages", type=int, help="limit stron listy komunikatów (domyślnie 500 przy --since)")
+    ap.add_argument("--ofe", action="store_true",
+                    help="tylko struktury portfeli OFE (od 31.12.2024) i przeliczenie zmian")
     a = ap.parse_args()
-    st, _ = run(weekly=a.weekly, limit=a.limit, skip_espi=a.skip_espi, since=a.since, max_pages=a.max_pages)
+    st, _ = run(weekly=a.weekly, limit=a.limit, skip_espi=a.skip_espi, since=a.since, max_pages=a.max_pages,
+                ofe_only=a.ofe)
     sys.exit(0 if st == "ok" else 1)

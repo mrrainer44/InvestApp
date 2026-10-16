@@ -120,8 +120,39 @@ GPW_DETAIL = ('<section><div class="report-data"><div class="dane"><p>Podstawa p
               '<a href="attachment/zal01_Zakup.pdf,20260820_101530_1,20260820">Zakup.pdf</a></div></div></section>')
 
 
+def ofe_xlsx(rows):
+    import io
+    import openpyxl
+    wb = openpyxl.Workbook()
+    for r in [["7", "Akcje spółek notowanych na rynku regulowanym na terytorium Rzeczypospolitej Polskiej oraz "
+                    "obligacje zamienne na akcje tych spółek"]] + rows + [
+            ["9", "Akcje spółek notowanych na rynku regulowanym w państwach innych niż Rzeczpospolita Polska"],
+            ["APPLE INC", 1.0, 5_000_000]]:
+        wb.active.append(r)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+# struktury PKO OFE: CPD 1,0 mln akcji -> 1,3 mln (+300 tys.), 11 BIT sprzedane w całości do końca 2025
+OFE_DOCS = {
+    "EBAN1/RR/2024-12-31": [["CPD S.A.", 0.1, 700_000.0], ["11 BIT STUDIOS S.A.", 0.5, 12_000_000.0]],
+    "EBAN1/RP/2025-06-30": [["CPD S.A.", 0.1, 910_000.0]],
+    "EBAN1/RR/2025-12-31": [["CPD S.A.", 0.1, 910_000.0]],
+}
+ARCHIVE = ('<table><tr><th>Nazwa</th><th>Waluta</th><th>Kurs otwarcia</th><th>Kurs maksymalny</th>'
+           '<th>Kurs minimalny</th><th>Kurs zamknięcia</th></tr>'
+           '<tr><td>CELTIC</td><td>PLN</td><td>1</td><td>1</td><td>1</td><td>0,7000</td></tr>'
+           '<tr><td>11BIT</td><td>PLN</td><td>1</td><td>1</td><td>1</td><td>120,0000</td></tr></table>')
+
+
 def fake_get(path, binary=False, tries=3):
     p = path.replace(config.BASE, "")
+    if p.startswith("https://dokumenty.analizy.pl/pobierz/fe/"):
+        rows = OFE_DOCS.get(p.split("/pobierz/fe/")[1])
+        return ofe_xlsx(rows) if rows else None
+    if p.startswith("https://www.gpw.pl/archiwum-notowan"):
+        return "<html>brak sesji</html>" if "date=31-12-" in p else ARCHIVE
     if "/ajaxindex.php?" in p:
         if "offset=0&" not in p:
             return ""
@@ -228,6 +259,25 @@ def test_pipeline():
     assert nc["ticker"] == "TBT" and nc["category"] == "other"
     assert con.execute("SELECT 1 FROM changes WHERE source='mar' AND espi_id=?",
                        ((50_000_000 + 480001) * 10,)).fetchone()
+
+    # struktury portfeli OFE (zaimportowane już w pierwszej rundzie tygodniowej)
+    ofe_rows = {(r["ticker"], r["date"]): dict(r) for r in con.execute(
+        "SELECT * FROM changes WHERE note LIKE 'struktura portfela OFE%'")}
+    cpd = ofe_rows[("CPD", "2025-06-30")]
+    assert cpd["investor"] == "OFE PKO BP Bankowy" and cpd["source"] == "fundusze", cpd
+    assert cpd["delta"] == 300000 and abs(cpd["value"] - 300000 * 0.7) < 1e-6, cpd
+    sold = ofe_rows[("11B", "2025-12-31")]  # roczna struktura = pełna lista -> brak spółki to sprzedaż
+    assert sold["delta"] == -100000 and abs(sold["value"] + 100000 * 120) < 1e-6, sold
+    assert ("CPD", "2025-12-31") not in ofe_rows  # bez zmiany
+    assert ("11B", "2025-06-30") not in ofe_rows  # półroczna lista jest niepełna - brak to nie sprzedaż
+    assert con.execute("SELECT close FROM price_history WHERE ticker='CPD' AND date='2024-12-30'").fetchone()
+    # podział akcji 1:10: jednodniowy skok 502 -> 49,61 zł; sama luka 526 -> 41,35 (bez sesji pomiędzy) to nie split
+    con.executemany("INSERT INTO price_history VALUES(?,?,?)", [("DNP", "2025-06-30", 526.0), ("DNP", "2025-12-30", 41.35)])
+    assert flows.split_factor(con, "DNP", "2025-06-30", "2025-12-31") == 1
+    con.executemany("INSERT INTO price_history VALUES(?,?,?)", [("DNP", "2025-07-30", 502.0), ("DNP", "2025-07-31", 49.61)])
+    assert flows.split_factor(con, "DNP", "2025-06-30", "2025-12-31") == 10
+    con.executemany("INSERT INTO price_history VALUES(?,?,?)", [("XYZ", "2025-03-03", 2.0), ("XYZ", "2025-03-04", 20.4)])
+    assert flows.split_factor(con, "XYZ", "2025-01-01", "2025-06-30") == 0.1  # scalenie akcji 10:1
 
     # agregacja tygodniowa
     agg = flows.investor_flows(con, "week", start="2026-01-01")

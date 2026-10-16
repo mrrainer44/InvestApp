@@ -292,8 +292,8 @@ const SOURCES = { art69: "Zawiadomienia art. 69", mar: "Insiderzy (MAR)", fundus
 const DEFAULT_SOURCES = ["art69", "mar", "fundusze", "akcjonariat"];
 let period = "week", tblInv;
 $("#srcChips").innerHTML = Object.entries(SOURCES).map(([k, v]) => `<label class="chip"><input type="checkbox" value="${k}" ${DEFAULT_SOURCES.includes(k) ? "checked" : ""}>${v}</label>`).join("");
-const d90 = new Date(Date.now() - 90 * 864e5).toISOString().slice(0, 10);
-$("#invFrom").value = d90;
+// od 1 stycznia poprzedniego roku - obejmuje półroczne i roczne struktury portfeli OFE
+$("#invFrom").value = `${new Date().getFullYear() - 1}-01-01`;
 
 async function loadInvestors() {
   const src = $$("#srcChips input:checked").map((i) => i.value).join(",");

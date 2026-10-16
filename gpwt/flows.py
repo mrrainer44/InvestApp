@@ -50,10 +50,16 @@ def rebuild_changes(con):
     for row in con.execute("SELECT id, ticker, ts, category, parsed FROM espi WHERE fetched=1 AND ticker IS NOT NULL "
                            "AND category IN ('art69','mar')").fetchall():
         p = json.loads(row["parsed"] or "{}")
+        seen = set()
         for i, f in enumerate(p.get("forms", [])):
             if f.get("delta") in (None, 0) or not f.get("investor"):
                 continue
-            d = f.get("event_date") or row["ts"][:10]
+            sig = (norm_investor(f["investor"]), f["delta"], f.get("shares_after"))
+            if sig in seen:
+                continue  # to samo zawiadomienie w treści raportu i w załączniku
+            seen.add(sig)
+            # data zdarzenia nie może być późniejsza niż publikacja raportu (literówki w formularzach, np. 2029)
+            d = min(f.get("event_date") or row["ts"][:10], row["ts"][:10])
             base = dict(date=d, ticker=row["ticker"], investor=f["investor"],
                         investor_norm=norm_investor(f["investor"]), delta=f["delta"],
                         source=row["category"], espi_id=row["id"] * 10 + i)
@@ -78,13 +84,31 @@ def rebuild_changes(con):
         key = (s["ticker"], s["holder_norm"], s["source"])
         if prev and prev[0] == key and s["date_upd"] != prev[1]["date_upd"] and s["shares"] != prev[1]["shares"]:
             p = prev[1]
+            before, note = p["shares"], f"odczyt {p['date_upd']} -> {s['date_upd']}"
+            if s["source"] == "OFE":
+                note = f"struktura portfela OFE {p['date_upd']} -> {s['date_upd']}"
+                k = split_factor(con, s["ticker"], p["date_upd"], s["date_upd"])
+                if k != 1:
+                    before = p["shares"] * k
+                    note += f" (podział akcji x{k:g} uwzględniony)"
+                # struktury OFE podają wartość, liczba akcji = wartość / kurs - pomijamy szum zaokrągleń
+                if before and abs(s["shares"] - before) / before < 0.005:
+                    prev = (key, s)
+                    continue
             src = "wz" if s["source"] == "WZ" else (
                 "fundusze" if any(t in s["holder_norm"].split() for t in FUND_RE) else "akcjonariat")
             _ins(con, date=s["date_upd"], ticker=s["ticker"], investor=s["holder"], investor_norm=s["holder_norm"],
-                 shares_before=p["shares"], shares_after=s["shares"], delta=s["shares"] - p["shares"],
-                 source=src, note=f"odczyt {p['date_upd']} -> {s['date_upd']}")
+                 shares_before=before, shares_after=s["shares"], delta=s["shares"] - before, source=src, note=note)
             n["chg_snap"] += 1
         prev = (key, s)
+
+    # ta sama zmiana OFE z akcjonariatu Biznesradar i ze struktury portfela -> liczymy raz (struktura)
+    ofe = con.execute("SELECT ticker, investor_norm, date FROM changes WHERE note LIKE 'struktura portfela OFE%'").fetchall()
+    for c in con.execute("SELECT id, ticker, investor_norm, date FROM changes WHERE source='fundusze' "
+                         "AND note LIKE 'odczyt%' AND excluded=0").fetchall():
+        if any(o["ticker"] == c["ticker"] and o["investor_norm"] == c["investor_norm"]
+               and abs((date.fromisoformat(o["date"]) - date.fromisoformat(c["date"][:10])).days) <= 10 for o in ofe):
+            con.execute("UPDATE changes SET excluded=1, note=note||' [duplikat struktury OFE]' WHERE id=?", (c["id"],))
 
     # --- deduplikacja: zmiana z akcjonariatu/WZ, która jest już w zawiadomieniu art. 69 ---
     art = con.execute("SELECT ticker, investor_norm, date, delta FROM changes WHERE source='art69'").fetchall()
@@ -101,6 +125,26 @@ def rebuild_changes(con):
                 break
     con.commit()
     return n
+
+
+def split_factor(con, ticker, d1, d2):
+    """Podział (lub scalenie) akcji między datami: jednodniowy skok surowego kursu zamknięcia o całkowitą
+    krotność (np. 502 -> 49,61 zł = split 1:10). Zwraca k (10 przy splicie 1:10, 0.1 przy scaleniu 10:1)
+    albo 1. Wymaga dziennych kursów w price_history (ofe.ensure_daily_prices dociąga je dla podejrzanych spółek)."""
+    rows = con.execute("SELECT date, close FROM price_history WHERE ticker=? AND date>=? AND date<=? ORDER BY date",
+                       (ticker, (date.fromisoformat(d1) - timedelta(days=5)).isoformat(), d2)).fetchall()
+    k = 1
+    for a, b in zip(rows, rows[1:]):
+        if not (a["close"] and b["close"]):
+            continue
+        if (date.fromisoformat(b["date"]) - date.fromisoformat(a["date"])).days > 5:
+            continue  # tylko sąsiednie sesje - luka w danych to nie split
+        r = a["close"] / b["close"]
+        for ratio, sign in ((r, 1), (1 / r, -1)):
+            n = round(ratio)
+            if n >= 2 and abs(ratio - n) / n < 0.12:
+                k = k * n if sign == 1 else k / n
+    return k
 
 
 def price_on(con, ticker, d):
@@ -120,6 +164,7 @@ def fill_prices(con, max_tickers=80):
             continue
         con.execute("UPDATE changes SET price=?, price_src='zamknięcie', value=delta*? WHERE id=?", (p, p, c["id"]))
         filled += 1
+    con.commit()  # nie trzymamy blokady zapisu bazy w trakcie pobierania historii kursów
     fetched = 0
     for ticker, rows in list(missing.items())[:max_tickers]:
         slug = con.execute("SELECT slug FROM companies WHERE ticker=?", (ticker,)).fetchone()
@@ -140,6 +185,7 @@ def fill_prices(con, max_tickers=80):
                 con.execute("UPDATE changes SET price=?, price_src='zamknięcie', value=delta*? WHERE id=?",
                             (p, p, c["id"]))
                 filled += 1
+        con.commit()
     con.commit()
     return {"prices_filled": filled, "price_histories_fetched": fetched}
 
