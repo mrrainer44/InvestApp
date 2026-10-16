@@ -16,7 +16,9 @@ Kliknięcie tickera otwiera panel spółki: wykres kursu, akcjonariat, zmiany, d
 2. Rozpakuj folder w dowolnym miejscu, np. `C:\Users\barte\OneDrive\Dokumenty\Bartek\TRADING\GPW Tracker`.
 3. Uruchom **`install.bat`** – utworzy środowisko, zainstaluje biblioteki i doda zadanie w Harmonogramie zadań (codziennie 18:30; jeśli komputer był wyłączony, uruchomi się po włączeniu).
 4. Uruchom **`pierwsze_pobranie.bat`** – pierwszy pełny przebieg trwa ok. 40 minut.
-5. Uruchom **`start.bat`** – aplikacja otworzy się w przeglądarce pod `http://127.0.0.1:8050`.
+5. Uruchom **`start.bat`** – aplikacja otworzy się w przeglądarce pod `http://127.0.0.1:8050`. To okno musi zostać otwarte, dopóki korzystasz z aplikacji – zamknięcie go wyłącza serwer.
+
+Żeby korzystać z aplikacji bez trzymania otwartego okna konsoli, uruchom zamiast tego **`start_tlo.bat`** – uruchomi serwer w tle (bez widocznego okna) i od razu otworzy przeglądarkę. Adres `http://127.0.0.1:8050` zostaje ten sam, działa dopóki nie uruchomisz **`stop_tlo.bat`** albo nie zrestartujesz komputera. Logi serwera trafiają do `logs\server.out.log` i `logs\server.err.log`.
 
 Godzinę pobierania zmienisz poleceniem (PowerShell w folderze aplikacji):
 `powershell -ExecutionPolicy Bypass -File schedule.ps1 -Time "07:30"`
