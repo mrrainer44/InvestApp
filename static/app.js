@@ -258,7 +258,7 @@ async function openCompany(t) {
   $("#drawerBody").innerHTML = `
     <h2>${esc(c.ticker)} · ${esc(c.full_name || c.short_name)}</h2>
     <div class="dim">${esc(c.market === "NC" ? "NewConnect" : "GPW")}${c.sector ? " · " + esc(c.sector) : ""}${c.isin ? " · " + esc(c.isin) : ""}
-      · <a href="https://www.biznesradar.pl/notowania/${encodeURIComponent(c.slug)}" target="_blank" rel="noopener">profil w Biznesradar</a></div>
+      ${c.slug ? `· <a href="https://www.biznesradar.pl/notowania/${encodeURIComponent(c.slug)}" target="_blank" rel="noopener">profil w Biznesradar</a>` : "· wycofana z obrotu (brak w Biznesradar)"}</div>
     <div class="facts">
       <div><b>${fmtNum(row.price)}</b><span>Kurs</span></div>
       <div><b>${fmtMoney(row.mcap)}</b><span>Kapitalizacja</span></div>

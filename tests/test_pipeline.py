@@ -39,7 +39,8 @@ QHEAD = ('<table class="table"><thead><tr><th><a>Profil</a></th><th>Czas</th><th
 GPW_ROWS = [("PKO", "PKOBP", "PKO", "PKO BP", "115,84", "+0,57%", "2 801 040", "323 180 854"),
             ("11B", "11BIT", "11-BIT-STUDIOS", "11 BIT STUDIOS", "121,00", "+0,67%", "6 869", "824 830"),
             ("OUT", "OUTDOORZY", "OUT", "OUTDOORZY", "3,10", "-1,00%", "1 000", "3 100"),
-            ("CPD", "CELTIC", "CPD", "CPD", "0,700", "-5,41%", "23 770", "16 921")]
+            ("CPD", "CELTIC", "CPD", "CPD", "0,700", "-5,41%", "23 770", "16 921"),
+            ("EBP", "ERSTEPL", "EBP", "ERSTE BANK POLSKA", "500,00", "+0,10%", "1 000", "500 000")]
 NC_ROWS = [("TBT", "TRUSTBTC", "TBT", "TRUSTBTC", "1,20", "0,00%", "500", "600")]
 
 RET = ('<table class="table"><thead><tr><th>Profil</th><th>1t</th><th>1m</th><th>3m</th><th>6m</th><th>YTD</th>'
@@ -59,10 +60,14 @@ DIV = ('<table class="table"><thead><tr><th>Profil</th><th>Dywidenda za rok</th>
        '</tbody></table>')
 
 
-def akc_page(rows, shares="1 250 000 000"):
+ISINS = {"PKO": "PLPKO0000016", "11-BIT-STUDIOS": "PL11BTS00015", "OUT": "PLOUTDR00012",
+         "CPD": "PLCELPD00013", "EBP": "PLBZ00000044", "TBT": "PLTRSTB00011"}
+
+
+def akc_page(rows, shares="1 250 000 000", isin="PLPKO0000016"):
     tr = "".join(f"<tr><td>{h}</td><td>{p} %</td><td>{s}</td><td>1</td><td>{p} %</td><td>{s}</td><td>{d}</td></tr>"
                  for h, p, s, d in rows)
-    return ('<table class="profileSummary"><tr><th>ISIN:</th><td>PLPKO0000016</td></tr>'
+    return (f'<table class="profileSummary"><tr><th>ISIN:</th><td>{isin}</td></tr>'
             f'<tr><th>Liczba akcji:</th><td><a>{shares}</a></td></tr><tr><th>Kapitalizacja:</th><td>1</td></tr>'
             '<tr><th>Branża:</th><td><a>Banki</a></td></tr></table>'
             '<table class="qTableFull"><tbody><tr><th>Akcjonariusz</th><th>Udział</th><th>Liczba akcji</th>'
@@ -134,16 +139,36 @@ def ofe_xlsx(rows):
     return buf.getvalue()
 
 
-# struktury PKO OFE: CPD 1,0 mln akcji -> 1,3 mln (+300 tys.), 11 BIT sprzedane w całości do końca 2025
+# struktury PKO OFE: CPD 1,0 mln akcji -> 1,3 mln (+300 tys.), 11 BIT sprzedane w całości do końca 2025;
+# Santander Bank Polska (dziś Erste, EBP) 2 tys. -> 3 tys. akcji; Shoper wycofany z obrotu w 2025 (sprzedany)
 OFE_DOCS = {
-    "EBAN1/RR/2024-12-31": [["CPD S.A.", 0.1, 700_000.0], ["11 BIT STUDIOS S.A.", 0.5, 12_000_000.0]],
+    "EBAN1/RR/2024-12-31": [["CPD S.A.", 0.1, 700_000.0], ["11 BIT STUDIOS S.A.", 0.5, 12_000_000.0],
+                            ["Santander Bank Polska S.A.", 0.1, 1_000_000.0], ["Shoper S.A.", 0.1, 5_000_000.0]],
     "EBAN1/RP/2025-06-30": [["CPD S.A.", 0.1, 910_000.0]],
-    "EBAN1/RR/2025-12-31": [["CPD S.A.", 0.1, 910_000.0]],
+    "EBAN1/RR/2025-12-31": [["CPD S.A.", 0.1, 910_000.0], ["SANTANDER BANK POLSKA S.A.", 0.1, 1_500_000.0]],
 }
-ARCHIVE = ('<table><tr><th>Nazwa</th><th>Waluta</th><th>Kurs otwarcia</th><th>Kurs maksymalny</th>'
-           '<th>Kurs minimalny</th><th>Kurs zamknięcia</th></tr>'
-           '<tr><td>CELTIC</td><td>PLN</td><td>1</td><td>1</td><td>1</td><td>0,7000</td></tr>'
-           '<tr><td>11BIT</td><td>PLN</td><td>1</td><td>1</td><td>1</td><td>120,0000</td></tr></table>')
+# eksport XLS archiwum notowań gpw.pl (w teście XLSX - parser czyta oba)
+ARCH_HEAD = ["Data", "Nazwa", "ISIN", "Waluta", "Kurs otwarcia", "Kurs max", "Kurs min", "Kurs zamknięcia", "Zmiana"]
+ARCHIVE = {
+    "30-12-2024": [("CELTIC", "PLCELPD00013", 0.7), ("11BIT", "PL11BTS00015", 120.0),
+                   ("SANPL", "PLBZ00000044", 500.0), ("SHOPER", "PLSHPR000021", 40.0)],
+    "30-06-2025": [("CELTIC", "PLCELPD00013", 0.7), ("11BIT", "PL11BTS00015", 120.0),
+                   ("SANPL", "PLBZ00000044", 500.0)],
+    "30-12-2025": [("CELTIC", "PLCELPD00013", 0.7), ("11BIT", "PL11BTS00015", 120.0),
+                   ("ERSTEPL", "PLBZ00000044", 500.0)],
+}
+
+
+def archive_xlsx(d):
+    import io
+    import openpyxl
+    wb = openpyxl.Workbook()
+    wb.active.append(ARCH_HEAD)
+    for name, isin, close in ARCHIVE.get(d, ARCHIVE["30-12-2025"]):
+        wb.active.append([d, name, isin, "PLN", close, close, close, close, 0.0])
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def fake_get(path, binary=False, tries=3):
@@ -152,7 +177,8 @@ def fake_get(path, binary=False, tries=3):
         rows = OFE_DOCS.get(p.split("/pobierz/fe/")[1])
         return ofe_xlsx(rows) if rows else None
     if p.startswith("https://www.gpw.pl/archiwum-notowan"):
-        return "<html>brak sesji</html>" if "date=31-12-" in p else ARCHIVE
+        d = p.split("date=")[1]
+        return b"<html>brak sesji</html>" if d.startswith("31-12-") else archive_xlsx(d)
     if "/ajaxindex.php?" in p:
         if "offset=0&" not in p:
             return ""
@@ -187,7 +213,7 @@ def fake_get(path, binary=False, tries=3):
                          ("OFE Nationale Nederlanden", "7.03", "87 916 000", "29.06.2026"),
                          ("TFI PZU S.A.", "0.81", "10 167 062", "30.06.2026")])
     if p.startswith("/akcjonariat/"):
-        return akc_page([], "26 150 000")
+        return akc_page([], "26 150 000", ISINS[p.split("/")[-1]])
     if p == "/temat/76,espi-ebi":
         return ESPI_LIST
     if p.startswith("/temat/76,espi-ebi,"):
@@ -223,7 +249,7 @@ def test_pipeline():
 
     st, stats = collect.run(weekly=True)
     assert st == "ok", stats
-    assert stats["quotes_GPW"] == 4 and stats["quotes_NC"] == 1
+    assert stats["quotes_GPW"] == 5 and stats["quotes_NC"] == 1
 
     con = db.connect()
     cats = dict(con.execute("SELECT id, category FROM espi").fetchall())
@@ -271,6 +297,17 @@ def test_pipeline():
     assert ("CPD", "2025-12-31") not in ofe_rows  # bez zmiany
     assert ("11B", "2025-06-30") not in ofe_rows  # półroczna lista jest niepełna - brak to nie sprzedaż
     assert con.execute("SELECT close FROM price_history WHERE ticker='CPD' AND date='2024-12-30'").fetchone()
+    # spółka po zmianie nazwy (SANPL -> ERSTEPL): dawna nazwa prawna i skrót z archiwum łączone po ISIN
+    ebp = ofe_rows[("EBP", "2025-12-31")]
+    assert ebp["delta"] == 1000 and abs(ebp["value"] - 1000 * 500) < 1e-6, ebp
+    assert con.execute("SELECT shares FROM holdings_snap WHERE source='OFE' AND ticker='EBP' AND date_upd='2024-12-31'"
+                       ).fetchone()[0] == 2000
+    # spółka wycofana z obrotu (brak na liście Biznesradar) dopisana z archiwum gpw.pl, jej sprzedaż policzona
+    sho = dict(con.execute("SELECT * FROM companies WHERE isin='PLSHPR000021'").fetchone())
+    assert sho["ticker"] == "SHO" and sho["short_name"] == "SHOPER" and sho["market"] == "GPW", sho
+    assert sho["last_seen"] == "2024-12-30" and sho["slug"] is None, sho
+    assert ofe_rows[("SHO", "2025-12-31")]["delta"] == -125000
+    assert con.execute("SELECT COUNT(*) FROM companies WHERE short_name IN ('SANPL', 'ERSTEPL')").fetchone()[0] == 1
     # podział akcji 1:10: jednodniowy skok 502 -> 49,61 zł; sama luka 526 -> 41,35 (bez sesji pomiędzy) to nie split
     con.executemany("INSERT INTO price_history VALUES(?,?,?)", [("DNP", "2025-06-30", 526.0), ("DNP", "2025-12-30", 41.35)])
     assert flows.split_factor(con, "DNP", "2025-06-30", "2025-12-31") == 1
@@ -307,7 +344,8 @@ def test_pipeline():
     assert upd["value"] == -420000 and upd["price_src"] == "ręcznie"
     assert cl.get("/api/espi?days=3650&categories=art69,mar").status_code == 200
     assert cl.get("/api/company/PKO").get_json()["dividends"]
-    assert cl.get("/api/status").get_json()["counts"]["companies"] == 5
+    assert cl.get("/api/status").get_json()["counts"]["companies"] == 7
+    assert any(r["ticker"] == "SHO" for r in rows)  # wycofana spółka widoczna w widoku Spółki
     assert cl.post("/api/aliases", json={"alias_norm": out["investor_norm"], "canonical": "Hegen Invest"}).status_code == 200
     print("OK – potok i API działają")
 

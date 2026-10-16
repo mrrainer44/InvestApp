@@ -5,6 +5,11 @@ pobieramy z archiwum dokumenty.analizy.pl.
 Struktury podają wartość pozycji w zł, a nie liczbę akcji. Liczbę akcji szacujemy jako
 wartość / kurs zamknięcia z ostatniej sesji przed datą wyceny (archiwum notowań gpw.pl).
 Zrzuty trafiają do holdings_snap (source='OFE'); flows.rebuild_changes liczy z nich zmiany.
+
+Lista notowań Biznesradar ma tylko spółki notowane dziś - pod dzisiejszymi nazwami. Archiwum gpw.pl
+(eksport XLS z ISIN) pokazuje skład rynku z dnia wyceny: spółki po zmianie nazwy (CCC -> MODIVO,
+SANPL -> ERSTEPL) łączymy po ISIN z istniejącym tickerem, a wycofane z obrotu (Shoper, Grenevia,
+Comarch...) dopisujemy do companies, żeby było do czego przypisać pozycje i ich sprzedaż.
 """
 import difflib
 import io
@@ -12,8 +17,6 @@ import json
 import logging
 import re
 from datetime import date, timedelta
-
-from bs4 import BeautifulSoup
 
 from . import http
 from .util import ascii_fold, norm_company, norm_investor
@@ -32,7 +35,24 @@ FUNDS = {
     "EPCZ1": "OFE Pocztylion Arka",
 }
 DOC_URL = "https://dokumenty.analizy.pl/pobierz/fe/{code}/{kind}/{date}"
-ARCHIVE_URL = "https://www.gpw.pl/archiwum-notowan?fetch=0&type=10&instrument=&date={d}"
+ARCHIVE_URL = "https://www.gpw.pl/archiwum-notowan?fetch=1&type=10&instrument=&date={d}"
+
+# dawne nazwy prawne spółek po zmianie nazwy (ISIN -> nazwy z dokumentów PTE); skrót giełdowy
+# z dnia wyceny dochodzi automatycznie z archiwum gpw.pl
+OLD_NAMES = {
+    "PLBZ00000044": ["Santander Bank Polska"],          # dziś Erste Bank Polska (EBP)
+    "PLFAMUR00012": ["Fabryka Maszyn Famur", "Famur"],  # Grenevia
+    "PLKRINK00014": ["Kredyt Inkaso"],
+    "PLMRCOR00016": ["Mercor"],                         # dziś MCR
+}
+# tickery spółek wycofanych z obrotu (Biznesradar i gpw.pl już ich nie pokazują); pozostałe
+# wycofane dostają ticker = skrót z archiwum gpw.pl
+DELISTED_TICKERS = {
+    "PLSHPR000021": "SHO",   # Shoper
+    "PLFAMUR00012": "GEA",   # Grenevia
+    "PLCOMAR00012": "CMR",   # Comarch
+    "PLKRINK00014": "KRI",   # Kredyt Inkaso
+}
 
 # nazwy prawne / skróty z dokumentów PTE, których nie da się dopasować automatycznie
 ALIASES = {
@@ -84,24 +104,29 @@ def to_float(s):
     return float(s.replace(",", "."))
 
 
-def doc_lines(data):
-    """Plik struktury (PDF / XLSX / XLS) -> lista linii tekstu; komórki arkusza rozdzielone ' | '."""
-    if data[:4] == b"%PDF":
-        from pypdf import PdfReader
-        return "\n".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(data)).pages).splitlines()
+def sheet_rows(data):
+    """Arkusz XLSX / XLS -> lista wierszy (wszystkie zakładki); [] gdy to nie arkusz (np. strona HTML)."""
     rows = []
     if data[:4] == b"PK\x03\x04":
         import openpyxl
         wb = openpyxl.load_workbook(io.BytesIO(data), read_only=True, data_only=True)
         for ws in wb.worksheets:
             rows += [list(r) for r in ws.iter_rows(values_only=True)]
-    else:
+    elif data[:4] == b"\xd0\xcf\x11\xe0":
         import xlrd
         wb = xlrd.open_workbook(file_contents=data)
         for sh in wb.sheets():
             rows += [sh.row_values(i) for i in range(sh.nrows)]
+    return rows
+
+
+def doc_lines(data):
+    """Plik struktury (PDF / XLSX / XLS) -> lista linii tekstu; komórki arkusza rozdzielone ' | '."""
+    if data[:4] == b"%PDF":
+        from pypdf import PdfReader
+        return "\n".join((p.extract_text() or "") for p in PdfReader(io.BytesIO(data)).pages).splitlines()
     out = []
-    for r in rows:
+    for r in sheet_rows(data):
         cells = [str(c).strip() for c in r if c is not None and str(c).strip()]
         if cells:
             out.append(" | ".join(cells))
@@ -200,6 +225,14 @@ class Matcher:
             if long:
                 self.long_keys.setdefault(k, ticker)
 
+    def add_session_names(self, names):
+        """Nazwy z archiwum gpw.pl z dnia wyceny ({skrót: ticker}) i dawne nazwy prawne spod OLD_NAMES."""
+        for name, (ticker, long) in names.items():
+            self._add(name, ticker, long)
+        self.keys = list(self.by_norm)
+        for k, t in self.by_norm.items():
+            self.flat.setdefault(k.replace(" ", ""), t)
+
     def match(self, name):
         k = _key(name)
         if not k:
@@ -231,33 +264,88 @@ class Matcher:
         return any(own & {w for w in _key(n).split() if len(w) >= 4} for n in names)
 
 
+def parse_session(data):
+    """Eksport XLS archiwum notowań gpw.pl -> [{name, isin, close}]; [] w dzień bez sesji (strona HTML)."""
+    rows = sheet_rows(data or b"")
+    if not rows:
+        return []
+    hdr = [ascii_fold(str(h or "")).lower() for h in rows[0]]
+    try:
+        iname, iisin = hdr.index("nazwa"), hdr.index("isin")
+        iclose = next(i for i, h in enumerate(hdr) if h.startswith("kurs zamkni"))
+    except (ValueError, StopIteration):
+        return []
+    out = []
+    for r in rows[1:]:
+        if len(r) <= max(iname, iisin, iclose) or not r[iname] or r[iclose] in (None, ""):
+            continue
+        close = r[iclose] if isinstance(r[iclose], (int, float)) else to_float(str(r[iclose]))
+        out.append({"name": str(r[iname]).strip(), "isin": str(r[iisin] or "").strip() or None, "close": close})
+    return out
+
+
+def resolve_session(con, rows, iso):
+    """Wiersze archiwum gpw.pl -> {skrót: ticker}. Spółkę łączymy po ISIN, potem po skrócie (tylko gdy ISIN
+    się nie kłóci); spółkę spoza companies (wycofaną z obrotu) dopisujemy."""
+    by_isin, by_short, tickers = {}, {}, set()
+    for r in con.execute("SELECT ticker, short_name, isin FROM companies"):
+        tickers.add(r["ticker"])
+        if r["isin"]:
+            by_isin.setdefault(r["isin"], r["ticker"])
+        by_short.setdefault(r["short_name"], (r["ticker"], r["isin"]))
+    out = {}
+    for row in rows:
+        name, isin = row["name"], row["isin"]
+        t = by_isin.get(isin)
+        if not t and name in by_short and by_short[name][1] in (None, isin):
+            t = by_short[name][0]
+            if isin and not by_short[name][1]:
+                con.execute("UPDATE companies SET isin=? WHERE ticker=?", (isin, t))
+        if not t:
+            t = DELISTED_TICKERS.get(isin) or name
+            if t in tickers:
+                t = f"{name}-W"
+            if t in tickers:
+                continue
+            con.execute("INSERT INTO companies(ticker, short_name, market, isin, last_seen) VALUES(?,?,?,?,?)",
+                        (t, name, "GPW", isin, iso))
+            log.info("      dopisuję spółkę spoza listy Biznesradar: %s (%s, %s)", t, name, isin)
+            tickers.add(t)
+            by_isin[isin] = t
+        else:
+            con.execute("UPDATE companies SET last_seen=? WHERE ticker=? AND slug IS NULL "
+                        "AND (last_seen IS NULL OR last_seen<?)", (iso, t, iso))
+        out[name] = t
+    return out
+
+
 def session_prices(con, d):
-    """Kursy zamknięcia wszystkich spółek GPW z ostatniej sesji <= d -> (data sesji, {ticker: kurs})."""
-    by_short = {r["short_name"]: r["ticker"] for r in con.execute("SELECT ticker, short_name FROM companies")}
+    """Kursy zamknięcia wszystkich spółek GPW z ostatniej sesji <= d
+    -> (data sesji, {ticker: kurs}, {nazwa: (ticker, pełna nazwa?)} do Matcher.add_session_names)."""
     day = date.fromisoformat(d)
     for back in range(8):
         dd = day - timedelta(days=back)
         if dd.weekday() >= 5:
             continue
-        html = http.get(ARCHIVE_URL.format(d=dd.strftime("%d-%m-%Y")))
-        if not html:
+        rows = parse_session(http.get(ARCHIVE_URL.format(d=dd.strftime("%d-%m-%Y")), binary=True))
+        if not rows:
             continue
-        prices = {}
-        for t in BeautifulSoup(html, "lxml").find_all("table"):
-            first = t.find("tr")
-            if not first or "Kurs zamkni" not in first.get_text():
+        iso = dd.isoformat()
+        tick = resolve_session(con, rows, iso)
+        prices, names = {}, {}
+        for row in rows:
+            t = tick.get(row["name"])
+            if not t:
                 continue
-            for tr in t.find_all("tr")[1:]:
-                c = [x.get_text(strip=True) for x in tr.find_all("td")]
-                if len(c) >= 6 and c[0] in by_short and c[5]:
-                    prices[by_short[c[0]]] = to_float(c[5])
-        if prices:
-            iso = dd.isoformat()
-            con.executemany("INSERT OR IGNORE INTO price_history VALUES(?,?,?)",
-                            [(t, iso, p) for t, p in prices.items()])
-            con.commit()  # nie trzymamy blokady zapisu bazy w trakcie pobierania plików struktur
-            return iso, prices
-    return None, {}
+            prices[t] = row["close"]
+            names[row["name"]] = (t, False)
+            for old in OLD_NAMES.get(row["isin"], ()):
+                names[old] = (t, True)
+        con.executemany("INSERT OR IGNORE INTO price_history VALUES(?,?,?)",
+                        [(t, iso, p) for t, p in prices.items()])
+        con.commit()  # nie trzymamy blokady zapisu bazy w trakcie pobierania plików struktur
+        return iso, prices, names
+    return None, {}, {}
 
 
 def ensure_daily_prices(con):
@@ -350,14 +438,16 @@ def collect(con, stats, since="2024-12-31"):
     matcher = Matcher(con)
     today = date.today().isoformat()
     imported, problems = 0, {}
+    n_companies = con.execute("SELECT COUNT(*) FROM companies").fetchone()[0]
     for kind, d in report_dates(since):
         todo = [c for c in FUNDS if f"{c}/{kind}/{d}" not in done]
         if not todo:
             continue
-        session, prices = session_prices(con, d)
+        session, prices, names = session_prices(con, d)
         if not prices:
             log.warning("Brak kursów z sesji przed %s - pomijam struktury OFE z tej daty", d)
             continue
+        matcher.add_session_names(names)
         log.info("[OFE] Struktury %s na %s (kursy z sesji %s): %s funduszy", kind, d, session, len(todo))
         for code in todo:
             data = http.get(DOC_URL.format(code=code, kind=kind, date=d), binary=True)
@@ -374,6 +464,7 @@ def collect(con, stats, since="2024-12-31"):
     con.execute("INSERT OR REPLACE INTO settings VALUES('ofe_docs', ?)", (json.dumps(sorted(done)),))
     con.commit()
     stats["ofe_docs"] = imported
+    stats["ofe_new_companies"] = con.execute("SELECT COUNT(*) FROM companies").fetchone()[0] - n_companies
     stats["ofe_split_checks"] = ensure_daily_prices(con)
     if problems:
         stats["ofe_problems"] = problems
