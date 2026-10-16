@@ -1,0 +1,147 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPW Tracker</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Sans+Condensed:wght@400;600&display=swap">
+<link rel="stylesheet" href="/static/vendor/tabulator_simple.min.css">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<nav class="rail" aria-label="Widoki">
+  <div class="brand">GPW Tracker<small>GPW i NewConnect</small></div>
+  <button data-view="companies" aria-current="page">Spółki</button>
+  <button data-view="investors">Inwestorzy</button>
+  <button data-view="changes">Zmiany stanu posiadania</button>
+  <button data-view="espi">Komunikaty ESPI</button>
+  <button data-view="settings">Dane i ustawienia</button>
+  <div class="foot" id="lastRun">Brak danych o ostatnim pobraniu</div>
+</nav>
+
+<main>
+  <section id="view-companies">
+    <h1>Spółki</h1>
+    <p class="lead">Kurs, wycena, dywidendy i ruchy dużych inwestorów w jednej tabeli. Kolumny przeciągasz, sortujesz kliknięciem w nagłówek, a w swoich kolumnach wpisujesz wartości bezpośrednio w komórce.</p>
+    <div class="toolbar">
+      <input type="search" id="q" placeholder="Szukaj spółki, tickera, branży" aria-label="Szukaj">
+      <div class="seg" role="group" aria-label="Rynek">
+        <button data-mkt="" aria-pressed="true">Wszystkie</button>
+        <button data-mkt="GPW" aria-pressed="false">GPW</button>
+        <button data-mkt="NC" aria-pressed="false">NewConnect</button>
+      </div>
+      <select id="viewSel" aria-label="Zapisany widok"></select>
+      <span class="grow"></span>
+      <button class="btn" id="btnCols">Kolumny</button>
+      <button class="btn" id="btnAddCol">Dodaj kolumnę</button>
+      <button class="btn" id="btnSaveView">Zapisz widok</button>
+      <button class="btn" id="btnCsv">Eksport CSV</button>
+    </div>
+    <div class="grid-wrap"><div id="tblCompanies"></div></div>
+  </section>
+
+  <section id="view-investors" hidden>
+    <h1>Inwestorzy</h1>
+    <p class="lead">Ile kupił lub sprzedał każdy inwestor w tygodniu albo miesiącu. Kwoty to szacunek: zmiana liczby akcji razy kurs zamknięcia z dnia zdarzenia (przy transakcjach insiderów cena z formularza).</p>
+    <div class="toolbar">
+      <div class="seg" role="group" aria-label="Okres">
+        <button data-period="week" aria-pressed="true">Tygodnie</button>
+        <button data-period="month" aria-pressed="false">Miesiące</button>
+      </div>
+      <label>od <input type="date" id="invFrom"></label>
+      <label>do <input type="date" id="invTo"></label>
+      <div class="chips" id="srcChips"></div>
+      <span class="grow"></span>
+      <input type="search" id="invQ" placeholder="Szukaj inwestora" aria-label="Szukaj inwestora">
+    </div>
+    <div class="grid-wrap"><div id="tblInvestors"></div></div>
+  </section>
+
+  <section id="view-changes" hidden>
+    <h1>Zmiany stanu posiadania</h1>
+    <p class="lead">Każda pojedyncza zmiana, z której liczone są sumy inwestorów. Gdy parser się pomylił, popraw liczby w komórce albo wyklucz wiersz z sum.</p>
+    <div class="toolbar">
+      <input type="search" id="chQ" placeholder="Ticker lub inwestor" aria-label="Filtruj">
+      <select id="chSrc" aria-label="Źródło">
+        <option value="">Wszystkie źródła</option>
+        <option value="art69">Zawiadomienia art. 69</option>
+        <option value="mar">Transakcje insiderów (MAR)</option>
+        <option value="fundusze">Portfele OFE/TFI</option>
+        <option value="akcjonariat">Główni akcjonariusze</option>
+        <option value="wz">Listy z walnych zgromadzeń</option>
+      </select>
+      <label><input type="checkbox" id="chUnverified"> tylko niesprawdzone</label>
+      <span class="grow"></span>
+      <button class="btn" id="chClear">Wyczyść filtr</button>
+    </div>
+    <div class="grid-wrap"><div id="tblChanges"></div></div>
+  </section>
+
+  <section id="view-espi" hidden>
+    <h1>Komunikaty ESPI</h1>
+    <p class="lead">Raporty bieżące posortowane od najnowszych. Pokazuję tylko te, które mają znaczenie dla akcjonariatu.</p>
+    <div class="toolbar">
+      <div class="chips" id="espiChips"></div>
+      <select id="espiDays" aria-label="Zakres">
+        <option value="7">7 dni</option><option value="30" selected>30 dni</option><option value="90">90 dni</option><option value="365">rok</option>
+      </select>
+      <input type="search" id="espiQ" placeholder="Szukaj w tytułach" aria-label="Szukaj w tytułach">
+    </div>
+    <div class="grid-wrap"><div id="tblEspi"></div></div>
+  </section>
+
+  <section id="view-settings" hidden>
+    <h1>Dane i ustawienia</h1>
+    <p class="lead">Dane pobierają się same raz dziennie (Harmonogram zadań Windows). Tutaj sprawdzisz, czy ostatnie pobranie się udało, i uruchomisz je ręcznie.</p>
+    <div class="toolbar">
+      <button class="btn primary" id="btnRun">Pobierz dane teraz</button>
+      <button class="btn" id="btnRunWeekly">Odśwież pełny akcjonariat (ok. 30 min)</button>
+      <span id="runState" class="dim"></span>
+    </div>
+    <div id="counts" class="facts"></div>
+    <h2 style="font-size:16px;margin-top:24px">Ostatnie pobrania</h2>
+    <div class="grid-wrap"><div id="tblRuns"></div></div>
+    <h2 style="font-size:16px;margin-top:24px">Łączenie nazw inwestorów</h2>
+    <p class="lead">Ten sam inwestor bywa zapisany różnie (np. „OFE Nationale Nederlanden” i „Nationale-Nederlanden Otwarty Fundusz Emerytalny”). Wpisz wspólną nazwę w kolumnie „Pokazuj jako”, a sumy w widoku Inwestorzy się połączą.</p>
+    <div class="grid-wrap"><div id="tblAliases"></div></div>
+  </section>
+</main>
+
+<aside class="drawer" id="drawer" aria-hidden="true">
+  <button class="btn close" id="drawerClose">Zamknij</button>
+  <div id="drawerBody"></div>
+</aside>
+
+<dialog id="dlgCols">
+  <h2>Widoczne kolumny</h2>
+  <div class="colgroups" id="colList"></div>
+  <div class="row"><button class="btn" id="colsReset">Przywróć domyślne</button><button class="btn primary" data-close>Gotowe</button></div>
+</dialog>
+
+<dialog id="dlgAdd">
+  <h2>Nowa kolumna</h2>
+  <form method="dialog" id="formAdd">
+    <label for="newLabel">Nazwa</label>
+    <input type="text" id="newLabel" required placeholder="np. Kupiłem, Cena docelowa, Notatka" style="width:100%">
+    <label for="newType">Rodzaj danych</label>
+    <select id="newType" style="width:100%">
+      <option value="text">Tekst</option>
+      <option value="number">Liczba</option>
+      <option value="bool">Tak / nie</option>
+      <option value="date">Data</option>
+      <option value="list">Lista do wyboru</option>
+    </select>
+    <div id="optWrap" hidden>
+      <label for="newOpts">Wartości listy (oddziel przecinkiem)</label>
+      <input type="text" id="newOpts" placeholder="obserwuję, kupione, sprzedane" style="width:100%">
+    </div>
+    <div class="row"><button class="btn" value="cancel" formnovalidate>Anuluj</button><button class="btn primary" value="ok">Dodaj kolumnę</button></div>
+  </form>
+</dialog>
+
+<div class="toast" id="toast" role="status"></div>
+<script src="/static/vendor/tabulator.min.js"></script>
+<script src="/static/app.js"></script>
+</body>
+</html>

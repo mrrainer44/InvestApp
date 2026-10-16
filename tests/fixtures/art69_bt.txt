@@ -1,0 +1,27 @@
+Typ podmiotu
+Imię
+Bartosz
+Nazwisko
+Tyrawski 
+brak numeru PESEL 
+Liczba akcji razem
+0
+Podmiot, którego dotyczy zdarzenie
+Tyrawski Bartosz
+Data przekazania zawiadomienia
+2026-10-15
+Data zdarzenia
+2026-10-6
+Data rozliczenia transakcji   Data powzięcia informacji o zdarzeniu
+2026-10-14
+Rodzaj zdarzenia
+Rejestracja zmian KZ w KRS
+stan przed zmianą   stan po zmianie 
+Liczba akcji razem
+0
+Liczba akcji razem
+500 000
+% udział w liczbie głosów
+0
+% udział w liczbie głosów
+5,49 
