@@ -312,6 +312,7 @@ async function loadInvestors() {
   ];
   if (tblInv) tblInv.destroy();
   tblInv = new Tabulator("#tblInvestors", { data, columns: cols, layout: "fitData", height: "calc(100vh - 190px)",
+    movableColumns: true,
     placeholder: "Brak zmian w wybranym okresie i źródłach.", groupBy: "period", groupStartOpen: (v, count, data, g) => true,
     groupHeader: (v, count, rows) => { const net = rows.reduce((s, r) => s + (r.net || 0), 0);
       return `${esc(v)} <span class="dim">· ${count} inwestorów · saldo ${fmtMoney(net)}</span>`; } });
@@ -333,6 +334,7 @@ async function loadChanges() {
   const intEd = { editor: "number", hozAlign: "right", formatter: (c) => fmtNum(c.getValue(), 0), sorter: numSort };
   if (tblCh) tblCh.destroy();
   tblCh = new Tabulator("#tblChanges", { data, index: "id", layout: "fitData", height: "calc(100vh - 190px)",
+    movableColumns: true,
     placeholder: "Brak zmian. Pojawią się po pierwszym pobraniu komunikatów i akcjonariatu.",
     columns: [
       { field: "date", title: "Data", editor: "input", width: 100 },
@@ -383,6 +385,7 @@ async function loadEspi() {
   const data = await api(`/api/espi?days=${$("#espiDays").value}&categories=${cats}`);
   if (tblEspi) tblEspi.destroy();
   tblEspi = new Tabulator("#tblEspi", { data, index: "id", layout: "fitData", height: "calc(100vh - 190px)",
+    movableColumns: true,
     placeholder: "Brak komunikatów w tym zakresie.",
     columns: [
       { field: "ts", title: "Czas", width: 140 },
@@ -409,13 +412,13 @@ async function loadSettings() {
   $("#runState").textContent = s.job_running ? "Pobieranie trwa…" : "";
   const runs = s.runs.map((r) => ({ ...r, summaryText: summarize(r.summary) }));
   if (tblRuns) tblRuns.destroy();
-  tblRuns = new Tabulator("#tblRuns", { data: runs, layout: "fitData", maxHeight: 300, placeholder: "Jeszcze nic nie pobrano.",
+  tblRuns = new Tabulator("#tblRuns", { data: runs, layout: "fitData", maxHeight: 300, movableColumns: true, placeholder: "Jeszcze nic nie pobrano.",
     columns: [{ field: "started", title: "Start" }, { field: "finished", title: "Koniec" }, { field: "kind", title: "Rodzaj", formatter: (c) => c.getValue() === "weekly" ? "pełne" : "dzienne" },
       { field: "status", title: "Wynik", formatter: (c) => c.getValue() === "ok" ? `<span class="up">udane</span>` : c.getValue() === "error" ? `<span class="down">błąd</span>` : "w toku" },
       { field: "summaryText", title: "Podsumowanie", width: 640, tooltip: true }] });
   const inv = await api("/api/investors");
   if (tblAl) tblAl.destroy();
-  tblAl = new Tabulator("#tblAliases", { data: inv, index: "investor_norm", layout: "fitData", maxHeight: 420, placeholder: "Inwestorzy pojawią się po pierwszych zmianach.",
+  tblAl = new Tabulator("#tblAliases", { data: inv, index: "investor_norm", layout: "fitData", maxHeight: 420, movableColumns: true, placeholder: "Inwestorzy pojawią się po pierwszych zmianach.",
     columns: [{ field: "investor", title: "Nazwa w danych", width: 340, headerFilter: "input" }, { field: "n", title: "Zmian", hozAlign: "right" },
       { field: "canonical", title: "Pokazuj jako", editor: "input", width: 280 }, { field: "investor_norm", title: "Klucz", cssClass: "dim", width: 260 }] });
   tblAl.on("cellEdited", async (cell) => { await api("/api/aliases", { method: "POST", body: { alias_norm: cell.getRow().getIndex(), canonical: cell.getValue() } }); toast("Zapisano nazwę"); });
