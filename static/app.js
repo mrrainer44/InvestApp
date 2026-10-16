@@ -301,13 +301,13 @@ async function loadInvestors() {
   const scale = data.map((d) => Math.abs(d.net)).sort((a, b) => b - a)[Math.min(3, data.length - 1)] || 1;
   const cols = [
     { field: "period", title: period === "week" ? "Tydzień" : "Miesiąc", width: 100, headerFilter: "list", headerFilterParams: { valuesLookup: true, clearable: true } },
-    { field: "investor", title: "Inwestor", width: 300, formatter: (c) => `<a href="#" class="inv">${esc(c.getValue())}</a>` },
+    { field: "investor", title: "Inwestor", width: 300, headerFilter: "input", formatter: (c) => `<a href="#" class="inv">${esc(c.getValue())}</a>` },
     { field: "net", title: "Saldo (kupno − sprzedaż)", width: 240, formatter: (c) => flowBar(c.getValue(), scale), sorter: numSort },
     { field: "buy", title: "Kupno", hozAlign: "right", formatter: money, sorter: numSort },
     { field: "sell", title: "Sprzedaż", hozAlign: "right", formatter: money, sorter: numSort },
     { field: "n", title: "Zmian", hozAlign: "right" },
-    { field: "tickers", title: "Spółki", width: 220, tooltip: true, formatter: (c) => esc(c.getValue()).split(", ").map((t) => `<a class="tk" href="#" data-t="${t}">${t}</a>`).join(" ") },
-    { field: "sources", title: "Źródła" },
+    { field: "tickers", title: "Spółki", width: 220, tooltip: true, headerFilter: "input", formatter: (c) => esc(c.getValue()).split(", ").map((t) => `<a class="tk" href="#" data-t="${t}">${t}</a>`).join(" ") },
+    { field: "sources", title: "Źródła", headerFilter: "input" },
     { field: "unpriced", title: "Bez wyceny", hozAlign: "right", headerTooltip: "Zmiany, dla których nie znaleziono kursu – nie są wliczone do kwot" },
   ];
   if (tblInv) tblInv.destroy();
@@ -337,18 +337,21 @@ async function loadChanges() {
     movableColumns: true,
     placeholder: "Brak zmian. Pojawią się po pierwszym pobraniu komunikatów i akcjonariatu.",
     columns: [
-      { field: "date", title: "Data", editor: "input", width: 100 },
-      { field: "ticker", title: "Ticker", formatter: tickerFmt, width: 80 },
-      { field: "investor", title: "Inwestor", editor: "input", width: 260, tooltip: true },
+      { field: "date", title: "Data", editor: "input", width: 100, headerFilter: "input" },
+      { field: "ticker", title: "Ticker", formatter: tickerFmt, width: 80, headerFilter: "input" },
+      { field: "investor", title: "Inwestor", editor: "input", width: 260, tooltip: true, headerFilter: "input" },
       { field: "shares_before", title: "Akcje przed", ...intEd },
       { field: "shares_after", title: "Akcje po", ...intEd },
       { field: "delta", title: "Zmiana", ...intEd, formatter: (c) => { const v = c.getValue(); return v == null ? "" : `<span class="${v > 0 ? "up" : "down"}">${v > 0 ? "+" : ""}${fmtNum(v, 0)}</span>`; } },
       { field: "price", title: "Cena", editor: "number", hozAlign: "right", formatter: num2, sorter: numSort },
       { field: "value", title: "Wartość", hozAlign: "right", formatter: money, sorter: numSort },
-      { field: "source", title: "Źródło", formatter: (c) => `<span class="tag ${c.getValue()}">${esc(SOURCES[c.getValue()] || c.getValue())}</span>` },
-      { field: "verified", title: "Sprawdzone", editor: "tickCross", formatter: "tickCross", hozAlign: "center", width: 100 },
-      { field: "excluded", title: "Wyklucz z sum", editor: "tickCross", formatter: "tickCross", hozAlign: "center", width: 110 },
-      { field: "note", title: "Uwagi", editor: "input", width: 240, tooltip: true },
+      { field: "source", title: "Źródło", formatter: (c) => `<span class="tag ${c.getValue()}">${esc(SOURCES[c.getValue()] || c.getValue())}</span>`,
+        headerFilter: "list", headerFilterParams: { values: SOURCES, clearable: true } },
+      { field: "verified", title: "Sprawdzone", editor: "tickCross", formatter: "tickCross", hozAlign: "center", width: 100,
+        headerFilter: "tickCross", headerFilterParams: { tristate: true }, headerFilterFunc: (h, v) => h === null || h === !!v },
+      { field: "excluded", title: "Wyklucz z sum", editor: "tickCross", formatter: "tickCross", hozAlign: "center", width: 110,
+        headerFilter: "tickCross", headerFilterParams: { tristate: true }, headerFilterFunc: (h, v) => h === null || h === !!v },
+      { field: "note", title: "Uwagi", editor: "input", width: 240, tooltip: true, headerFilter: "input" },
       { field: "espi_id", title: "Raport", formatter: (c) => { const id = Math.floor((c.getValue() || 0) / 10);
         return id ? `<a href="https://www.biznesradar.pl/a/${id}" target="_blank" rel="noopener">otwórz</a>` : ""; } },
     ] });
@@ -367,7 +370,7 @@ function filterChanges() {
 }
 $("#chQ").addEventListener("input", debounce(filterChanges, 150));
 ["#chSrc", "#chUnverified"].forEach((s) => $(s).addEventListener("change", filterChanges));
-$("#chClear").addEventListener("click", () => { $("#chQ").value = ""; $("#chSrc").value = ""; $("#chUnverified").checked = false; filterChanges(); });
+$("#chClear").addEventListener("click", () => { $("#chQ").value = ""; $("#chSrc").value = ""; $("#chUnverified").checked = false; filterChanges(); tblCh?.clearHeaderFilter(); });
 
 /* ---------- ESPI ---------- */
 const catLabel = { art69: "Zmiana udziału", mar: "Insider", wezwanie: "Wezwanie", wz_lista: "Lista z WZ", skup: "Skup akcji", other: "Inne" };
@@ -388,10 +391,11 @@ async function loadEspi() {
     movableColumns: true,
     placeholder: "Brak komunikatów w tym zakresie.",
     columns: [
-      { field: "ts", title: "Czas", width: 140 },
-      { field: "ticker", title: "Ticker", formatter: (c) => c.getValue() ? tickerFmt(c) : `<span class="dim" title="Kliknij, aby przypisać ticker">przypisz</span>`, editor: "input", width: 90 },
-      { field: "category", title: "Rodzaj", formatter: (c) => `<span class="tag ${c.getValue()}">${esc(catLabel[c.getValue()] || c.getValue())}</span>`, width: 130 },
-      { field: "title", title: "Tytuł", width: 520, formatter: (c) => `<a href="https://www.biznesradar.pl${esc(c.getRow().getData().url)}" target="_blank" rel="noopener">${esc(c.getValue())}</a>`, tooltip: true },
+      { field: "ts", title: "Czas", width: 140, headerFilter: "input" },
+      { field: "ticker", title: "Ticker", formatter: (c) => c.getValue() ? tickerFmt(c) : `<span class="dim" title="Kliknij, aby przypisać ticker">przypisz</span>`, editor: "input", width: 90, headerFilter: "input" },
+      { field: "category", title: "Rodzaj", formatter: (c) => `<span class="tag ${c.getValue()}">${esc(catLabel[c.getValue()] || c.getValue())}</span>`, width: 130,
+        headerFilter: "list", headerFilterParams: { values: catLabel, clearable: true } },
+      { field: "title", title: "Tytuł", width: 520, formatter: (c) => `<a href="https://www.biznesradar.pl${esc(c.getRow().getData().url)}" target="_blank" rel="noopener">${esc(c.getValue())}</a>`, tooltip: true, headerFilter: "input" },
       { field: "parsed", title: "Odczytane dane", width: 420, formatter: (c) => esc(parsedSummary(c.getRow().getData().category, c.getValue())), tooltip: true },
     ] });
   tblEspi.on("cellEdited", async (cell) => { if (cell.getField() !== "ticker") return;
