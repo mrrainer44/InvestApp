@@ -171,7 +171,12 @@ def archive_xlsx(d):
     return buf.getvalue()
 
 
+REQUESTED = []
+REJECTED = b"<html><head><title>Request Rejected</title></head><body>The requested URL was rejected.</body></html>"
+
+
 def fake_get(path, binary=False, tries=3):
+    REQUESTED.append(path)
     p = path.replace(config.BASE, "")
     if p.startswith("https://dokumenty.analizy.pl/pobierz/fe/"):
         rows = OFE_DOCS.get(p.split("/pobierz/fe/")[1])
@@ -185,12 +190,12 @@ def fake_get(path, binary=False, tries=3):
         return GPW_LIST if p.startswith("https://www.gpw.pl/") else NC_LIST
     if p == "https://www.gpw.pl/komunikat?geru_id=480001":
         return GPW_DETAIL
-    if binary and p == "https://www.gpw.pl/attachment/zal01_Zakup.pdf,20260820_101530_1,20260820":
-        return (FIX / "mar.pdf").read_bytes()
+    if binary and (p.startswith("https://www.gpw.pl/attachment/") or p == "/pdf/blocked.pdf"):
+        return REJECTED  # tak serwer odpowiada na automatyczne pobieranie załącznika
     if binary:
         name = {"/pdf/hegen.pdf": "art69_hegen.txt", "/pdf/bt.pdf": "art69_bt.txt"}.get(p)
         if name:
-            return ("TXT:" + (FIX / name).read_text(encoding="utf-8")).encode()
+            return ("%PDF-TXT:" + (FIX / name).read_text(encoding="utf-8")).encode()
         if p == "/pdf/mar.pdf":
             return (FIX / "mar.pdf").read_bytes()
         return None
@@ -225,15 +230,15 @@ def fake_get(path, binary=False, tries=3):
     if p == "/a/161596,pko":
         return article("".join(f"<p>{x}</p>" for x in (FIX / "wz_pko.txt").read_text(encoding="utf-8").splitlines()))
     if p == "/a/162097,tbt":
-        return article("<p>zawiadomienia</p>", ["/pdf/bt.pdf"])
+        return article("<p>zawiadomienia</p>", ["/pdf/bt.pdf", "/pdf/blocked.pdf"])
     if p.startswith("/notowania-historyczne/"):
         return HIST
     return "<html></html>"
 
 
 def fake_pdf_text(data):
-    if data.startswith(b"TXT:"):
-        return data[4:].decode()
+    if data.startswith(b"%PDF-TXT:"):
+        return data[9:].decode()
     from pypdf import PdfReader
     import io
     return "\n".join(pg.extract_text() for pg in PdfReader(io.BytesIO(data)).pages)
@@ -265,6 +270,9 @@ def test_pipeline():
     mar = ch["mar:CPD"]
     assert mar["delta"] == 30000 and mar["price"] == 0.1 and abs(mar["value"] - 3000) < 1e-9
     assert ch["art69:TBT"]["delta"] == 500000
+    # odrzucony załącznik (strona HTML zamiast PDF) jest pomijany i nie trafia do pamięci podręcznej
+    assert stats["espi_not_pdf"] == 1, stats
+    assert not (config.PDF_CACHE / "162097_1.txt").exists()
 
     # druga runda: fundusz PZU dokupił akcje PKO -> zmiana "fundusze"
     STATE["akc_round"] = 2
@@ -280,11 +288,10 @@ def test_pipeline():
     g = con.execute("SELECT * FROM espi WHERE id=?", (50_000_000 + 480001,)).fetchone()
     assert g["ticker"] == "CPD" and g["category"] == "mar" and g["ts"] == "2026-08-20 10:15", dict(g)
     assert g["url"] == "https://www.gpw.pl/komunikat?geru_id=480001" and g["fetched"] == 1
-    assert '"forms": [{' in g["parsed"], g["parsed"]
+    assert "Art. 19 ust. 3 MAR" in g["body"]  # treść raportu jest czytana...
+    assert not any("/attachment/" in u for u in REQUESTED)  # ...a zablokowanych załączników nie pobieramy
     nc = con.execute("SELECT * FROM espi WHERE id=?", (60_000_000 + 230001,)).fetchone()
     assert nc["ticker"] == "TBT" and nc["category"] == "other"
-    assert con.execute("SELECT 1 FROM changes WHERE source='mar' AND espi_id=?",
-                       ((50_000_000 + 480001) * 10,)).fetchone()
 
     # struktury portfeli OFE (zaimportowane już w pierwszej rundzie tygodniowej)
     ofe_rows = {(r["ticker"], r["date"]): dict(r) for r in con.execute(

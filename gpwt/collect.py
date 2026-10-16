@@ -205,26 +205,35 @@ def fetch_espi_details(con, stats):
     todo = con.execute(
         f"SELECT * FROM espi WHERE fetched=0 AND category IN ({','.join('?' * len(FETCH_BODY))}) ORDER BY id",
         tuple(FETCH_BODY)).fetchall()
-    parsed_ok = 0
+    parsed_ok, not_pdf = 0, 0
     log.info("[2/4] Odczytuję treść i załączniki PDF istotnych komunikatów: %s", len(todo))
     for n_done, row in enumerate(todo, 1):
         if n_done % 10 == 0:
             log.info("      komunikaty: %s/%s", n_done, len(todo))
-        fetch = gpwpl.fetch_article if gpwpl.is_own_url(row["url"]) else br.fetch_article
-        art = fetch(row["url"])
+        own = gpwpl.is_own_url(row["url"])
+        art = (gpwpl.fetch_article if own else br.fetch_article)(row["url"])
         if art is None:
             con.execute("UPDATE espi SET fetched=-1 WHERE id=?", (row["id"],))
             continue
         text = art["text"]
-        if row["category"] in FETCH_PDF:
+        # gpw.pl i newconnect.pl odrzucają automatyczne pobieranie załączników (zabezpieczenie serwera),
+        # więc z tych źródeł czytamy tylko treść raportu
+        if row["category"] in FETCH_PDF and not own:
             for i, href in enumerate(art["pdfs"][:6]):
                 cache = PDF_CACHE / f"{row['id']}_{i}.txt"
-                if cache.exists():
+                if cache.exists() and cache.stat().st_size:
                     text += "\n\n=== PDF ===\n" + cache.read_text(encoding="utf-8")
                     continue
                 data = http.get(href, binary=True)
-                if data and len(data) <= MAX_PDF_BYTES:
-                    t = espi.pdf_text(data)
+                if not data or len(data) > MAX_PDF_BYTES:
+                    continue
+                if data[:4] != b"%PDF":
+                    not_pdf += 1
+                    log.warning("Załącznik nie jest plikiem PDF (%s B, zaczyna się od %r) - pomijam: %s",
+                                len(data), data[:15], href)
+                    continue
+                t = espi.pdf_text(data)
+                if t.strip():
                     cache.write_text(t, encoding="utf-8")
                     text += "\n\n=== PDF ===\n" + t
         parsed = parse_espi_text(row["category"], text, row["title"], art.get("pdfs", []))
@@ -235,6 +244,8 @@ def fetch_espi_details(con, stats):
         con.commit()
     stats["espi_details"] = len(todo)
     stats["espi_parsed"] = parsed_ok
+    if not_pdf:
+        stats["espi_not_pdf"] = not_pdf
 
 
 def parse_espi_text(cat, text, title, pdfs):

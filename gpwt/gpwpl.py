@@ -2,6 +2,9 @@
 
 Biznesradar udostępnia listę komunikatów tylko z ostatnich ok. 6-7 tygodni, a te dwa serwisy
 sięgają lat wstecz - używamy ich do historycznego uzupełnienia (collect --since).
+
+Załączniki (attachment/...) oba serwisy odrzucają przy pobieraniu automatycznym (strona "Request
+Rejected" zamiast PDF), dlatego collect czyta z tych źródeł tylko treść raportu.
 """
 import re
 
