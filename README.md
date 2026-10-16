@@ -34,7 +34,9 @@ Wszystko pochodzi z publicznych stron serwisu Biznesradar.pl (notowania opóźni
 | Akcjonariat, liczba akcji, branża każdej spółki | raz w tygodniu | ok. 730 |
 | Archiwalne kursy do wyceny starszych zmian | gdy potrzeba | kilka–kilkadziesiąt |
 
-Dane są do Twojego prywatnego użytku. Nie publikuj ich dalej – prawa do treści ma serwis źródłowy.
+Lista komunikatów ESPI/EBI na Biznesradar sięga tylko ok. 6 tygodni wstecz. Starsze komunikaty uzupełnia jednorazowo **`pobierz_historie_2026.bat`** (`python -m gpwt.collect --since 2026-01-01`) z archiwów **gpw.pl** (Główny Rynek) i **newconnect.pl** (NewConnect). Te archiwa sięgają lat wstecz, a spółkę rozpoznajemy po kodzie ISIN. Bieżące pobieranie zostaje na Biznesradar, bo porównanie pokazało, że ma 100% komunikatów z obu serwisów GPW.
+
+Dane są do Twojego prywatnego użytku. Nie publikuj ich dalej – prawa do treści mają serwisy źródłowe.
 
 ## Jak liczona jest kwota „zainwestowana” przez inwestora
 
@@ -66,6 +68,7 @@ Kwota to szacunek: przy transakcjach pakietowych, ABB czy emisjach rzeczywista c
 app.py                 serwer (Flask) i API
 gpwt/collect.py        zbieranie danych (python -m gpwt.collect [--weekly] [--limit N])
 gpwt/biznesradar.py    parsery stron
+gpwt/gpwpl.py          archiwum komunikatów z gpw.pl i newconnect.pl (uzupełnianie historii)
 gpwt/espi.py           klasyfikacja komunikatów i odczyt formularzy art. 69 / MAR / WZ
 gpwt/flows.py          zmiany stanu posiadania, wycena, sumy tygodniowe/miesięczne
 gpwt/config.py         ustawienia (przerwy między zapytaniami, godziny, port)

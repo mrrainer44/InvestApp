@@ -25,6 +25,7 @@ const fmtMoney = (v) => {
   return F[0].format(v);
 };
 const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const espiHref = (url) => /^https:\/\//.test(url || "") ? url : `https://www.biznesradar.pl${url || ""}`;
 
 /* ---------- formatery komórek ---------- */
 const pct = (cell) => { const v = cell.getValue(); if (v == null) return "";
@@ -282,7 +283,7 @@ async function openCompany(t) {
       : `<p class="dim">Brak dywidend w ostatnich latach.</p>`}
     <h3>Komunikaty</h3>
     ${d.espi.length ? `<table>${d.espi.slice(0, 25).map((x) => `<tr><td style="white-space:nowrap">${esc(x.ts.slice(0, 10))}</td><td><span class="tag ${x.category}">${esc(catLabel[x.category] || x.category)}</span></td>
-      <td><a href="https://www.biznesradar.pl${esc(x.url)}" target="_blank" rel="noopener">${esc(x.title)}</a></td></tr>`).join("")}</table>` : `<p class="dim">Brak komunikatów w bazie.</p>`}`;
+      <td><a href="${esc(espiHref(x.url))}" target="_blank" rel="noopener">${esc(x.title)}</a></td></tr>`).join("")}</table>` : `<p class="dim">Brak komunikatów w bazie.</p>`}`;
   $("#drawer").classList.add("open"); $("#drawer").setAttribute("aria-hidden", "false");
 }
 
@@ -337,7 +338,10 @@ async function loadChanges() {
     movableColumns: true,
     placeholder: "Brak zmian. Pojawią się po pierwszym pobraniu komunikatów i akcjonariatu.",
     columns: [
-      { field: "date", title: "Data", editor: "input", width: 100, headerFilter: "input" },
+      { field: "date", title: "Data", editor: "input", width: 100, headerFilter: "input",
+        headerTooltip: "Data transakcji lub zmiany stanu posiadania (z formularza)" },
+      { field: "report_ts", title: "Opublikowano", width: 130, headerFilter: "input",
+        headerTooltip: "Kiedy spółka opublikowała raport ESPI/EBI z tą informacją" },
       { field: "ticker", title: "Ticker", formatter: tickerFmt, width: 80, headerFilter: "input" },
       { field: "investor", title: "Inwestor", editor: "input", width: 260, tooltip: true, headerFilter: "input" },
       { field: "shares_before", title: "Akcje przed", ...intEd },
@@ -352,8 +356,8 @@ async function loadChanges() {
       { field: "excluded", title: "Wyklucz z sum", editor: "tickCross", formatter: "tickCross", hozAlign: "center", width: 110,
         headerFilter: "tickCross", headerFilterParams: { tristate: true }, headerFilterFunc: (h, v) => h === null || h === !!v },
       { field: "note", title: "Uwagi", editor: "input", width: 240, tooltip: true, headerFilter: "input" },
-      { field: "espi_id", title: "Raport", formatter: (c) => { const id = Math.floor((c.getValue() || 0) / 10);
-        return id ? `<a href="https://www.biznesradar.pl/a/${id}" target="_blank" rel="noopener">otwórz</a>` : ""; } },
+      { field: "espi_id", title: "Raport", formatter: (c) => { const u = c.getRow().getData().espi_url;
+        return u ? `<a href="${esc(espiHref(u))}" target="_blank" rel="noopener">otwórz</a>` : ""; } },
     ] });
   tblCh.on("cellEdited", async (cell) => {
     const f = cell.getField(); let v = cell.getValue();
@@ -395,7 +399,7 @@ async function loadEspi() {
       { field: "ticker", title: "Ticker", formatter: (c) => c.getValue() ? tickerFmt(c) : `<span class="dim" title="Kliknij, aby przypisać ticker">przypisz</span>`, editor: "input", width: 90, headerFilter: "input" },
       { field: "category", title: "Rodzaj", formatter: (c) => `<span class="tag ${c.getValue()}">${esc(catLabel[c.getValue()] || c.getValue())}</span>`, width: 130,
         headerFilter: "list", headerFilterParams: { values: catLabel, clearable: true } },
-      { field: "title", title: "Tytuł", width: 520, formatter: (c) => `<a href="https://www.biznesradar.pl${esc(c.getRow().getData().url)}" target="_blank" rel="noopener">${esc(c.getValue())}</a>`, tooltip: true, headerFilter: "input" },
+      { field: "title", title: "Tytuł", width: 520, formatter: (c) => `<a href="${esc(espiHref(c.getRow().getData().url))}" target="_blank" rel="noopener">${esc(c.getValue())}</a>`, tooltip: true, headerFilter: "input" },
       { field: "parsed", title: "Odczytane dane", width: 420, formatter: (c) => esc(parsedSummary(c.getRow().getData().category, c.getValue())), tooltip: true },
     ] });
   tblEspi.on("cellEdited", async (cell) => { if (cell.getField() !== "ticker") return;

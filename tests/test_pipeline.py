@@ -101,8 +101,35 @@ HIST = ('<table class="qTableFull"><tbody><tr><th>Data</th><th>Otwarcie</th><th>
 STATE = {"akc_round": 1}
 
 
+def gpw_li(ts, kind, no, company, gid, subject):
+    return (f'<li><span class="date">{ts} | {kind} | ESPI | {no}</span><strong class="name">'
+            f'<a href="komunikat?geru_id={gid}&amp;title=x">{company}</a></strong>'
+            f'<span class="profit"><small>Zmiana</small> 0,10%</span><p>{subject}</p>'
+            f'<a href="komunikat?geru_id={gid}&amp;title=x">więcej &gt;</a></li>')
+
+
+GPW_LIST = (gpw_li("16-10-2026 09:00:00", "Bieżący", "42/2026", "CPD SPÓŁKA AKCYJNA (PLCELPD00013)", 499100,
+                   "Powiadomienie o transakcjach otrzymane w trybie art. 19 Rozporządzenia MAR")
+            + gpw_li("20-08-2026 10:15:30", "Bieżący", "30/2026", "CPD SPÓŁKA AKCYJNA (PLCELPD00013)", 480001,
+                     "Powiadomienie o transakcjach otrzymane w trybie art. 19 Rozporządzenia MAR")
+            + gpw_li("30-12-2025 16:00:00", "Bieżący", "50/2025", "CPD SPÓŁKA AKCYJNA (PLCELPD00013)", 460000,
+                     "Powiadomienie o transakcjach otrzymane w trybie art. 19 Rozporządzenia MAR"))
+NC_LIST = gpw_li("05-03-2026 12:00:00", "Bieżący", "3/2026", "TRUSTBTC S.A. (PLTRSTB00011)", 230001,
+                 "Rejestracja zmian statutu")
+GPW_DETAIL = ('<section><div class="report-data"><div class="dane"><p>Podstawa prawna: Art. 19 ust. 3 MAR</p>'
+              '<a href="attachment/zal01_Zakup.pdf,20260820_101530_1,20260820">Zakup.pdf</a></div></div></section>')
+
+
 def fake_get(path, binary=False, tries=3):
     p = path.replace(config.BASE, "")
+    if "/ajaxindex.php?" in p:
+        if "offset=0&" not in p:
+            return ""
+        return GPW_LIST if p.startswith("https://www.gpw.pl/") else NC_LIST
+    if p == "https://www.gpw.pl/komunikat?geru_id=480001":
+        return GPW_DETAIL
+    if binary and p == "https://www.gpw.pl/attachment/zal01_Zakup.pdf,20260820_101530_1,20260820":
+        return (FIX / "mar.pdf").read_bytes()
     if binary:
         name = {"/pdf/hegen.pdf": "art69_hegen.txt", "/pdf/bt.pdf": "art69_bt.txt"}.get(p)
         if name:
@@ -188,6 +215,19 @@ def test_pipeline():
     assert st == "ok", stats
     f = con.execute("SELECT * FROM changes WHERE source='fundusze' AND ticker='PKO'").fetchone()
     assert f and f["delta"] == 300000 and f["date"] == "2026-06-30", dict(f) if f else None
+
+    # trzecia runda: historia z archiwów gpw.pl / newconnect.pl sprzed zasięgu listy Biznesradar
+    st, stats = collect.run(since="2026-01-01")
+    assert st == "ok", stats
+    assert stats["gpw_history_new"] == 2, stats  # 16.10 jest w zasięgu Biznesradar, 2025 przed --since
+    g = con.execute("SELECT * FROM espi WHERE id=?", (50_000_000 + 480001,)).fetchone()
+    assert g["ticker"] == "CPD" and g["category"] == "mar" and g["ts"] == "2026-08-20 10:15", dict(g)
+    assert g["url"] == "https://www.gpw.pl/komunikat?geru_id=480001" and g["fetched"] == 1
+    assert '"forms": [{' in g["parsed"], g["parsed"]
+    nc = con.execute("SELECT * FROM espi WHERE id=?", (60_000_000 + 230001,)).fetchone()
+    assert nc["ticker"] == "TBT" and nc["category"] == "other"
+    assert con.execute("SELECT 1 FROM changes WHERE source='mar' AND espi_id=?",
+                       ((50_000_000 + 480001) * 10,)).fetchone()
 
     # agregacja tygodniowa
     agg = flows.investor_flows(con, "week", start="2026-01-01")

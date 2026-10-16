@@ -8,12 +8,13 @@ import argparse
 import difflib
 import json
 import logging
+import re
 import sys
 import traceback
 from datetime import date, datetime, timedelta
 
 from . import biznesradar as br
-from . import db, espi, flows, http
+from . import db, espi, flows, gpwpl, http
 from .config import (ESPI_FIRST_RUN_PAGES, ESPI_MAX_PAGES, LOG_DIR, MARKETS, MAX_PDF_BYTES,
                      PDF_CACHE, RATIOS)
 from .util import norm_company, norm_investor
@@ -133,12 +134,15 @@ FETCH_BODY = {"art69", "mar", "wz_lista", "wezwanie"}
 FETCH_PDF = {"art69", "mar"}
 
 
-def collect_espi(con, stats):
+def collect_espi(con, stats, max_pages=None, since=None):
+    """since: pobieraj strony listy, dopóki nie miniemy tej daty (YYYY-MM-DD) - do jednorazowego
+    historycznego uzupełnienia (python -m gpwt.collect --since 2026-01-01)."""
     known_max = con.execute("SELECT MAX(id) FROM espi").fetchone()[0]
-    pages = ESPI_MAX_PAGES if known_max else ESPI_FIRST_RUN_PAGES
+    pages = max_pages or (ESPI_MAX_PAGES if known_max else ESPI_FIRST_RUN_PAGES)
     matcher = CompanyMatcher(con)
     new = 0
-    log.info("[2/4] Komunikaty ESPI: przeglądam do %s stron listy...", pages)
+    log.info("[2/4] Komunikaty ESPI: przeglądam do %s stron listy%s...",
+             pages, f" (do {since})" if since else "")
     for p in range(1, pages + 1):
         items = br.fetch_espi_page(p)
         if not items:
@@ -151,19 +155,63 @@ def collect_espi(con, stats):
                         (it["id"], matcher.match(company), company, it["title"], it["url"], it["ts"], cat))
             new += 1
         con.commit()
-        if known_max and not fresh:
+        if p % 10 == 0:
+            log.info("      lista komunikatów: strona %s/%s (najstarsza na stronie: %s)", p, pages, items[-1]["ts"][:10])
+        if since:
+            if items[-1]["ts"][:10] < since:
+                break
+        elif known_max and not fresh:
             break
     stats["espi_new"] = new
 
+
+def collect_gpw_history(con, stats, since):
+    """Komunikaty sprzed zasięgu listy Biznesradar - z archiwów gpw.pl i newconnect.pl."""
+    until = con.execute("SELECT MIN(ts) FROM espi WHERE id < ?", (min(o for _, o in gpwpl.SOURCES.values()),)
+                        ).fetchone()[0] or "9999"
+    by_isin = {r["isin"]: r["ticker"] for r in con.execute("SELECT ticker, isin FROM companies WHERE isin IS NOT NULL")}
+    matcher = CompanyMatcher(con)
+    new = 0
+    for host in gpwpl.SOURCES:
+        log.info("[2/4] Archiwum %s: komunikaty od %s do %s...", host, since, until)
+        offset = 0
+        while True:
+            items = gpwpl.fetch_list(host, offset)
+            if not items:
+                break
+            for it in items:
+                if not (since <= it["ts"] < until):
+                    continue
+                if con.execute("SELECT 1 FROM espi WHERE id=?", (it["id"],)).fetchone():
+                    continue
+                no = it["report_no"]
+                title = (f"{it['company']} ({no}) {it['subject']}" if re.fullmatch(r"\d+/\d{4}", no)
+                         else f"{it['company']} {it['subject']}")
+                ticker = by_isin.get(it["isin"]) or matcher.match(it["company"])
+                con.execute("INSERT OR IGNORE INTO espi(id, ticker, company, title, url, ts, category) "
+                            "VALUES(?,?,?,?,?,?,?)",
+                            (it["id"], ticker, it["company"], title, it["url"], it["ts"], espi.classify(title)))
+                new += 1
+            con.commit()
+            offset += gpwpl.PAGE_SIZE
+            if offset % (gpwpl.PAGE_SIZE * 10) == 0:
+                log.info("      %s: %s komunikatów przejrzanych (najstarszy: %s)", host, offset, items[-1]["ts"][:10])
+            if items[-1]["ts"][:10] < since:
+                break
+    stats["gpw_history_new"] = new
+
+
+def fetch_espi_details(con, stats):
     todo = con.execute(
         f"SELECT * FROM espi WHERE fetched=0 AND category IN ({','.join('?' * len(FETCH_BODY))}) ORDER BY id",
         tuple(FETCH_BODY)).fetchall()
     parsed_ok = 0
-    log.info("[2/4] Nowe komunikaty: %s, odczytuję treść i załączniki PDF istotnych: %s", new, len(todo))
+    log.info("[2/4] Odczytuję treść i załączniki PDF istotnych komunikatów: %s", len(todo))
     for n_done, row in enumerate(todo, 1):
         if n_done % 10 == 0:
             log.info("      komunikaty: %s/%s", n_done, len(todo))
-        art = br.fetch_article(row["url"])
+        fetch = gpwpl.fetch_article if gpwpl.is_own_url(row["url"]) else br.fetch_article
+        art = fetch(row["url"])
         if art is None:
             con.execute("UPDATE espi SET fetched=-1 WHERE id=?", (row["id"],))
             continue
@@ -172,7 +220,7 @@ def collect_espi(con, stats):
             for i, href in enumerate(art["pdfs"][:6]):
                 cache = PDF_CACHE / f"{row['id']}_{i}.txt"
                 if cache.exists():
-                    text += "\n\n" + cache.read_text(encoding="utf-8")
+                    text += "\n\n=== PDF ===\n" + cache.read_text(encoding="utf-8")
                     continue
                 data = http.get(href, binary=True)
                 if data and len(data) <= MAX_PDF_BYTES:
@@ -255,19 +303,23 @@ def store_wz_snapshots(con):
     con.commit()
 
 
-def run(weekly=False, limit=None, skip_espi=False):
+def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None):
     setup_logging()
     db.init()
     stats = {}
     con = db.connect()
     run_id = con.execute("INSERT INTO runs(started, kind, status) VALUES(?,?,?)",
-                         (now(), "weekly" if weekly else "daily", "running")).lastrowid
+                         (now(), "backfill" if since else ("weekly" if weekly else "daily"), "running")).lastrowid
     con.commit()
     status = "ok"
     try:
-        collect_market_tables(con, stats)
+        if not since:
+            collect_market_tables(con, stats)
         if not skip_espi:
-            collect_espi(con, stats)
+            collect_espi(con, stats, max_pages=max_pages or (500 if since else None), since=since)
+            if since:
+                collect_gpw_history(con, stats, since)
+            fetch_espi_details(con, stats)
             store_wz_snapshots(con)
         last_weekly = con.execute("SELECT value FROM settings WHERE key='last_weekly'").fetchone()
         due = not last_weekly or (date.today() - date.fromisoformat(last_weekly[0])).days >= 6
@@ -294,6 +346,10 @@ if __name__ == "__main__":
     ap.add_argument("--weekly", action="store_true", help="wymuś odświeżenie akcjonariatu wszystkich spółek")
     ap.add_argument("--limit", type=int, help="ogranicz liczbę spółek w części tygodniowej")
     ap.add_argument("--skip-espi", action="store_true")
+    ap.add_argument("--since", metavar="YYYY-MM-DD",
+                     help="jednorazowe historyczne uzupełnienie komunikatów ESPI (art.69/MAR/wezwania/WZ) "
+                          "wstecz do tej daty, np. --since 2026-01-01")
+    ap.add_argument("--max-pages", type=int, help="limit stron listy komunikatów (domyślnie 500 przy --since)")
     a = ap.parse_args()
-    st, _ = run(weekly=a.weekly, limit=a.limit, skip_espi=a.skip_espi)
+    st, _ = run(weekly=a.weekly, limit=a.limit, skip_espi=a.skip_espi, since=a.since, max_pages=a.max_pages)
     sys.exit(0 if st == "ok" else 1)

@@ -219,7 +219,8 @@ def get_flows():
 @app.get("/api/changes")
 def get_changes():
     c = con()
-    q, p = "SELECT c.*, co.full_name FROM changes c LEFT JOIN companies co ON co.ticker=c.ticker WHERE 1=1", []
+    q, p = ("SELECT c.*, co.full_name, e.url AS espi_url, e.ts AS report_ts FROM changes c "
+            "LEFT JOIN companies co ON co.ticker=c.ticker LEFT JOIN espi e ON e.id=c.espi_id/10 WHERE 1=1"), []
     for arg, col in (("ticker", "c.ticker"), ("source", "c.source")):
         if request.args.get(arg):
             q += f" AND {col}=?"
