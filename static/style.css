@@ -132,10 +132,68 @@ input[type="search"] { min-width: 220px; }
 .drawer th { color: var(--muted); font-weight: 500; font-family: "IBM Plex Sans", sans-serif; }
 .drawer td.n, .drawer th.n { text-align: right; }
 .facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px 18px; margin-top: 12px; }
-.facts div { border-left: 2px solid var(--line); padding-left: 8px; }
-.facts b { display: block; font-family: var(--mono); font-size: 16px; }
-.facts span { color: var(--muted); font-size: 12px; }
+.fact { position: relative; border-left: 2px solid var(--line); padding-left: 8px; cursor: help; border-radius: 2px; }
+.fact:hover, .fact:focus { border-left-color: var(--accent); outline: none; }
+.fact b { display: block; font-family: var(--mono); font-size: 16px; }
+.fact > span { color: var(--muted); font-size: 12px; }
+.fact .info { display: inline-grid; place-items: center; width: 14px; height: 14px; border: 1px solid var(--muted);
+  border-radius: 50%; font: italic 600 10px/1 Georgia, serif; vertical-align: 1px; margin-left: 2px; }
+.fact .tip { display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 6; width: 290px;
+  background: var(--panel); color: var(--ink); border: 1px solid var(--line); border-radius: var(--radius);
+  box-shadow: 0 8px 24px rgba(16, 24, 32, .18); padding: 10px 12px; font-size: 13px; line-height: 1.45; }
+.fact .tip strong { display: block; margin-bottom: 2px; }
+.fact .tip em { display: block; margin-top: 6px; font-style: normal; font-weight: 600; }
+.fact.edge .tip { left: auto; right: 0; }
+.fact:hover .tip, .fact:focus .tip { display: block; }
+.chart-note { font-size: 12px; margin: 6px 0 0; }
 .spark { width: 100%; height: 90px; margin-top: 10px; }
+
+/* wykres przepływów w panelu spółki */
+#companyChart { margin-top: 16px; }
+.chart-ctl { display: flex; flex-wrap: wrap; gap: 8px; justify-content: space-between; }
+.chart-ctl .seg button { padding: 4px 10px; font-size: 13px; }
+.chart-sum { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 12px 0 4px; font-size: 13px; color: var(--muted); }
+.chart-sum b { color: var(--ink); font-family: var(--mono); font-weight: 600; }
+.key { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.key.in { background: var(--gain); }
+.key.out { background: var(--loss); }
+.key.cum { height: 2px; width: 14px; border-radius: 1px; background: var(--accent); vertical-align: 3px; }
+.chart-wrap { position: relative; }
+.flowchart { width: 100%; height: auto; display: block; overflow: visible; }
+.flowchart .gl { stroke: var(--line); stroke-width: 1; }
+.flowchart .zero { stroke: var(--muted); stroke-width: 1; }
+.flowchart .yl, .flowchart .xl, .flowchart .endl { fill: var(--muted); font: 11px var(--mono); }
+.flowchart .yl { text-anchor: end; }
+.flowchart .endl { fill: var(--ink); font-weight: 600; }
+.flowchart .bar-in { fill: var(--gain); }
+.flowchart .bar-out { fill: var(--loss); }
+.flowchart .bar-in.hl, .flowchart .bar-out.hl { opacity: .75; }
+.flowchart .cum { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.flowchart .cum-dot { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
+.flowchart .hit { fill: transparent; cursor: pointer; outline: none; }
+.flowchart .hit:focus-visible { fill: color-mix(in srgb, var(--accent) 12%, transparent); }
+.chart-tip { position: absolute; top: 0; width: 240px; pointer-events: none; z-index: 5; background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 8px 24px rgba(16, 24, 32, .18);
+  padding: 8px 10px; font-size: 12px; }
+.chart-tip .tv { font: 600 16px var(--mono); color: var(--ink); }
+.chart-tip .tl { color: var(--muted); margin-bottom: 4px; }
+.chart-tip .tr { color: var(--ink); }
+.chart-tip .ti { color: var(--muted); font-family: var(--mono); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.chart-empty { padding: 28px 0; text-align: center; }
+
+/* akcjonariat w grupach */
+.hgroups { font-size: 13px; }
+.hg-row { display: grid; grid-template-columns: 1fr 80px 120px 110px; gap: 8px; padding: 6px 6px;
+  border-bottom: 1px solid var(--line); align-items: baseline; }
+.hg-row .n { text-align: right; font-family: var(--mono); }
+.hg-head { color: var(--muted); font-weight: 500; }
+.hg > summary { cursor: pointer; list-style: none; font-weight: 600; }
+.hg > summary::-webkit-details-marker { display: none; }
+.hg > summary .hg-name::before { content: "▸"; display: inline-block; width: 14px; color: var(--muted); transition: transform .15s; }
+.hg[open] > summary .hg-name::before { transform: rotate(90deg); }
+.hg > summary:hover { background: var(--row-hover); }
+.hg-members .hg-row { padding-left: 26px; font-weight: 400; background: color-mix(in srgb, var(--paper) 50%, transparent); }
+.hg-members .hg-row.computed { font-style: italic; color: var(--muted); }
 
 /* ---- okna dialogowe ---- */
 dialog { border: 1px solid var(--line); border-radius: 10px; background: var(--panel); color: var(--ink);
@@ -165,4 +223,8 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18
   .rail .foot { display: none; }
   main { padding: 14px 12px; }
 }
-@media (prefers-reduced-motion: reduce) { .drawer, .toast { transition: none; } }
+@media (max-width: 560px) {
+  .hg-row { grid-template-columns: 1fr 64px 92px; }
+  .hg-row > span:nth-child(4) { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .drawer, .toast, .hg > summary .hg-name::before { transition: none; } }

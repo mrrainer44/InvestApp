@@ -142,6 +142,7 @@ def company(ticker):
                         (ticker,)),
         "dividends": db.rows(c, "SELECT * FROM dividends WHERE ticker=? ORDER BY last_day DESC", (ticker,)),
         "prices": db.rows(c, "SELECT date, close FROM price_history WHERE ticker=? ORDER BY date", (ticker,)),
+        "holder_groups": flows.holder_groups(c, ticker),
     }
     c.close()
     return jsonify(res)

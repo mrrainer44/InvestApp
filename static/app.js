@@ -239,6 +239,190 @@ document.addEventListener("click", (e) => {
 $("#drawerClose").addEventListener("click", () => { $("#drawer").classList.remove("open"); $("#drawer").setAttribute("aria-hidden", "true"); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#drawerClose").click(); });
 
+/* --- wskaźniki z objaśnieniem: co to jest i jak czytać obecny odczyt (progi orientacyjne) --- */
+const FACT_INFO = {
+  price: ["Kurs", "Ostatnia cena zamknięcia akcji (notowania z ok. 15-minutowym opóźnieniem).",
+    () => "Sam kurs nie jest ani dobry, ani zły - oceniaj go razem z C/Z, C/WK i przepływami."],
+  mcap: ["Kapitalizacja", "Kurs × liczba akcji, czyli wartość całej spółki według giełdy.",
+    (v) => v == null ? "Brak danych." : v >= 10e9 ? "Duża spółka - zwykle stabilniejsza i łatwiej kupić czy sprzedać akcje."
+      : v >= 1e9 ? "Średnia spółka." : "Mała spółka - większy potencjał, ale też większe ryzyko i słabsza płynność."],
+  cz: ["C/Z (cena / zysk)", "Ile złotych płacisz za 1 zł rocznego zysku spółki (ostatnie 4 kwartały), czyli po ilu latach zyski „zwrócą” cenę akcji.",
+    (v) => v == null ? "Brak danych - spółka mogła nie mieć zysku albo wyników." : v < 0 ? "Ujemne - spółka ma stratę (−)."
+      : v < 8 ? "Nisko - tanio względem zysków (+), ale sprawdź, czy zysk nie był jednorazowy."
+        : v <= 20 ? "W typowym przedziale dla GPW (ok. 10-15) - neutralnie." : "Wysoko - drogo względem zysków; ma sens tylko przy szybkim wzroście (−)."],
+  cwk: ["C/WK (cena / wartość księgowa)", "Ile płacisz za 1 zł majątku netto spółki (kapitału własnego).",
+    (v) => v == null ? "Brak danych." : v < 0 ? "Ujemny kapitał własny - sygnał ostrzegawczy (−)."
+      : v < 1 ? "Poniżej 1 - giełda wycenia spółkę taniej niż jej majątek (+), choć bywa to też sygnałem kłopotów."
+        : v <= 3 ? "Umiarkowanie - neutralnie." : "Wysoko - normalne w IT i markach, dla banków czy przemysłu to drogo (−)."],
+  dy: ["Stopa dywidendy", "Dywidendy wypłacone w ostatnich 12 miesiącach w stosunku do obecnego kursu.",
+    (v) => !v ? "Brak dywidendy w ostatnich 12 miesiącach." : v < 3 ? "Niska."
+      : v <= 7 ? "Dobra - regularny dochód gotówkowy (+)." : "Bardzo wysoka - sprawdź, czy nie jednorazowa i czy spółkę na nią stać (ostrożnie)."],
+  flow: ["Przepływ 30 dni", "Szacowane saldo zakupów minus sprzedaży dużych inwestorów (zawiadomienia art. 69, insiderzy, fundusze) z ostatnich 30 dni.",
+    (v) => !v ? "Brak zarejestrowanych ruchów w ostatnich 30 dniach." : v > 0 ? "Dodatni - duzi gracze dokupowali (+)." : "Ujemny - duzi gracze sprzedawali (−)."],
+};
+function fact(key, value, raw) {
+  const [label, what, read] = FACT_INFO[key];
+  return `<div class="fact" tabindex="0" aria-describedby="tip-${key}"><b>${value}</b>
+    <span>${esc(label)} <i class="info" aria-hidden="true">i</i></span>
+    <div class="tip" id="tip-${key}" role="tooltip"><strong>${esc(label)}</strong> ${esc(what)}
+      <em>Ten odczyt:</em> ${esc(read(raw))}</div></div>`;
+}
+
+/* --- przepływ kapitału dzień po dniu: słupki = saldo dnia, linia = saldo narastające w okresie --- */
+const FLOW_SOURCES = ["art69", "mar", "fundusze", "akcjonariat"];
+const PERIODS = [7, 30, 180, 365];
+const chartPref = (() => { try { return JSON.parse(localStorage.getItem("gpwt_chart") || "{}"); } catch { return {}; } })();
+const saveChartPref = () => { try { localStorage.setItem("gpwt_chart", JSON.stringify(chartPref)); } catch { /* brak dostępu do pamięci */ } };
+let drawerData = null;
+
+function dailyFlows(changes, startIso) {
+  const by = new Map();
+  for (const x of changes) {
+    if (x.excluded || x.value == null || !FLOW_SOURCES.includes(x.source) || x.date < startIso) continue;
+    const d = x.date.slice(0, 10);
+    const g = by.get(d) || { date: d, net: 0, buy: 0, sell: 0, items: [] };
+    g.net += x.value; if (x.value >= 0) g.buy += x.value; else g.sell -= x.value;
+    g.items.push(x); by.set(d, g);
+  }
+  return [...by.values()].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function niceStep(span) {
+  const raw = span / 4, p = 10 ** Math.floor(Math.log10(raw || 1)), m = raw / p;
+  return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 5 ? 5 : 10) * p;
+}
+
+function flowChart(days, start, end) {
+  if (!days.length) return `<p class="dim chart-empty">Brak zarejestrowanych przepływów w tym okresie.</p>`;
+  const W = 700, H = 180, L = 64, R = 70, T = 12, B = 24, day = 864e5;
+  const t0 = start.getTime(), t1 = end.getTime(), x = (iso) => L + ((Date.parse(iso) - t0) / (t1 - t0)) * (W - L - R);
+  let cum = 0;
+  const pts = days.map((g) => ({ ...g, cum: (cum += g.net) }));
+  const vals = [0, ...pts.map((g) => g.net), ...pts.map((g) => g.cum)];
+  let lo = Math.min(...vals), hi = Math.max(...vals);
+  const step = niceStep(hi - lo || Math.abs(hi) || 1);
+  lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
+  if (hi === lo) hi = lo + step;
+  const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
+  const bw = Math.max(3, Math.min(24, ((W - L - R) / ((t1 - t0) / day)) * 0.7));
+  const grid = [];
+  for (let v = lo; v <= hi + step / 2; v += step) {
+    grid.push(`<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" class="${v === 0 ? "zero" : "gl"}"/>
+      <text x="${L - 6}" y="${y(v) + 4}" class="yl">${v > 0 ? "+" : ""}${fmtMoney(v)}</text>`);
+  }
+  const bar = (g, i) => {
+    const cx = x(g.date), y0 = y(0), y1 = y(g.net), h = Math.abs(y1 - y0), r = Math.min(4, bw / 2, h);
+    const l = cx - bw / 2, rgt = cx + bw / 2, up = g.net >= 0;
+    const d = up ? `M${l},${y0} V${y1 + r} Q${l},${y1} ${l + r},${y1} H${rgt - r} Q${rgt},${y1} ${rgt},${y1 + r} V${y0} Z`
+      : `M${l},${y0} V${y1 - r} Q${l},${y1} ${l + r},${y1} H${rgt - r} Q${rgt},${y1} ${rgt},${y1 - r} V${y0} Z`;
+    return `<path d="${h < 0.5 ? `M${l},${y0}h${bw}` : d}" class="${up ? "bar-in" : "bar-out"}" data-i="${i}"/>`;
+  };
+  let line = `M${L},${y(0)}`, prev = 0;
+  for (const g of pts) { line += ` H${x(g.date)} V${y(g.cum)}`; prev = g.cum; }
+  line += ` H${W - R}`;
+  const hits = pts.map((g, i) => {
+    const w = Math.max(bw + 6, 14);
+    return `<rect class="hit" x="${x(g.date) - w / 2}" y="${T}" width="${w}" height="${H - T - B}" data-i="${i}" tabindex="0"
+      aria-label="${g.date}: saldo ${fmtMoney(g.net)}"/>`;
+  }).join("");
+  const fmtD = (dt) => dt.toISOString().slice(0, 10);
+  return `<div class="chart-wrap"><svg class="flowchart" viewBox="0 0 ${W} ${H}" role="img"
+      aria-label="Dzienne saldo przepływów kapitału od ${fmtD(start)} do ${fmtD(end)}">
+      ${grid.join("")}${pts.map(bar).join("")}
+      <path d="${line}" class="cum"/>
+      <circle cx="${W - R}" cy="${y(prev)}" r="4" class="cum-dot"/>
+      <text x="${W - R + 8}" y="${y(prev) + 4}" class="endl">${prev > 0 ? "+" : ""}${fmtMoney(prev)}</text>
+      <text x="${L}" y="${H - 6}" class="xl">${fmtD(start)}</text>
+      <text x="${W - R}" y="${H - 6}" class="xl" text-anchor="end">${fmtD(end)}</text>
+      ${hits}</svg><div class="chart-tip" role="status" hidden></div></div>`;
+}
+
+function bindFlowTips(root, days) {
+  const tip = root.querySelector(".chart-tip"), svg = root.querySelector(".flowchart");
+  if (!tip || !svg) return;
+  let cum = 0;
+  const pts = days.map((g) => ({ ...g, cum: (cum += g.net) }));
+  const show = (el) => {
+    const g = pts[+el.dataset.i];
+    tip.replaceChildren();
+    const add = (cls, text) => { const s = document.createElement("div"); s.className = cls; s.textContent = text; tip.append(s); };
+    add("tv", `${g.net > 0 ? "+" : ""}${fmtMoney(g.net)}`);
+    add("tl", `saldo dnia ${g.date}`);
+    add("tr", `kupno ${fmtMoney(g.buy)} · sprzedaż ${fmtMoney(g.sell)}`);
+    add("tr", `saldo narastające ${g.cum > 0 ? "+" : ""}${fmtMoney(g.cum)}`);
+    g.items.slice().sort((a, b) => Math.abs(b.value) - Math.abs(a.value)).slice(0, 3)
+      .forEach((it) => add("ti", `${it.value > 0 ? "+" : ""}${fmtMoney(it.value)}  ${it.investor}`));
+    if (g.items.length > 3) add("ti", `i jeszcze ${g.items.length - 3}…`);
+    svg.querySelectorAll(`[data-i]`).forEach((n) => n.classList.toggle("hl", n.dataset.i === el.dataset.i));
+    tip.hidden = false;
+    const box = root.getBoundingClientRect(), r = el.getBoundingClientRect();
+    const left = Math.min(Math.max(0, r.left - box.left + r.width / 2 - 120), box.width - 240);
+    tip.style.left = `${left}px`;
+  };
+  const hide = () => { tip.hidden = true; svg.querySelectorAll(".hl").forEach((n) => n.classList.remove("hl")); };
+  svg.querySelectorAll(".hit").forEach((h) => {
+    h.addEventListener("pointerenter", () => show(h)); h.addEventListener("focus", () => show(h));
+    h.addEventListener("pointerleave", hide); h.addEventListener("blur", hide);
+  });
+}
+
+function renderChart() {
+  const host = $("#companyChart");
+  if (!host || !drawerData) return;
+  const mode = chartPref.mode || "flow", days = chartPref.days || 365;
+  const end = new Date(), start = new Date(end.getTime() - days * 864e5), startIso = start.toISOString().slice(0, 10);
+  const flows = dailyFlows(drawerData.changes, startIso);
+  const sum = (k) => flows.reduce((s, g) => s + g[k], 0);
+  const net = sum("net");
+  host.querySelector(".chart-ctl").innerHTML = `
+    <div class="seg" role="group" aria-label="Rodzaj wykresu">
+      ${[["flow", "Przepływy"], ["price", "Kurs"]].map(([k, l]) => `<button data-mode="${k}" aria-pressed="${mode === k}">${l}</button>`).join("")}</div>
+    <div class="seg" role="group" aria-label="Okres">
+      ${PERIODS.map((p) => `<button data-days="${p}" aria-pressed="${days === p}">${p} dni</button>`).join("")}</div>`;
+  const body = host.querySelector(".chart-body");
+  if (mode === "price") {
+    body.innerHTML = sparkline(drawerData.prices.filter((p) => p.date >= startIso));
+    return;
+  }
+  body.innerHTML = `
+    <div class="chart-sum">
+      <span><i class="key in"></i>napływ <b>${sum("buy") ? "+" : ""}${fmtMoney(sum("buy"))}</b></span>
+      <span><i class="key out"></i>odpływ <b>${sum("sell") ? "−" : ""}${fmtMoney(sum("sell"))}</b></span>
+      <span><i class="key cum"></i>saldo narastające <b>${net > 0 ? "+" : ""}${fmtMoney(net)}</b></span>
+    </div>
+    ${flowChart(flows, start, end)}
+    <p class="dim chart-note">Słupek nad osią = kapitał napłynął, pod osią = odpłynął. Źródła: zawiadomienia art. 69, insiderzy (MAR),
+      fundusze, główni akcjonariusze. Zmiany w portfelach OFE mają datę sprawozdania (30.06 i 31.12). Szczegóły w tabeli „Zmiany stanu posiadania” niżej.</p>`;
+  bindFlowTips(body, flows);
+}
+
+document.addEventListener("click", (e) => {
+  const b = e.target.closest("#companyChart [data-mode], #companyChart [data-days]");
+  if (!b) return;
+  if (b.dataset.mode) chartPref.mode = b.dataset.mode;
+  if (b.dataset.days) chartPref.days = +b.dataset.days;
+  saveChartPref(); renderChart();
+});
+
+/* --- akcjonariat w grupach z rozwijaniem --- */
+function holderGroups(groups) {
+  if (!groups.length) return `<p class="dim">Akcjonariat pobiera się raz w tygodniu.</p>`;
+  const when = (g) => !g.date_to ? "–" : g.date_from === g.date_to ? esc(g.date_to)
+    : `<span title="Dane z różnych dat: ${esc(g.date_from)} – ${esc(g.date_to)}">do ${esc(g.date_to)}</span>`;
+  const row = (m) => `<div class="hg-row${m.computed ? " computed" : ""}"><span>${esc(m.holder)}</span>
+    <span class="n">${fmtNum(m.pct, 2)}%</span><span class="n">${m.shares == null ? "–" : fmtNum(m.shares, 0)}</span>
+    <span>${m.date_upd ? esc(m.date_upd) : "–"}</span></div>`;
+  return `<div class="hgroups">
+    <div class="hg-row hg-head"><span>Grupa</span><span class="n">Udział</span><span class="n">Akcje</span><span>Stan na</span></div>
+    ${groups.map((g) => `<details class="hg ${g.key}"><summary class="hg-row">
+        <span class="hg-name">${esc(g.label)} <small class="dim">(${g.members.length})</small></span>
+        <span class="n"><b>${fmtNum(g.pct, 2)}%</b></span><span class="n">${g.shares == null ? "–" : fmtNum(g.shares, 0)}</span>
+        <span>${when(g)}</span></summary>
+        <div class="hg-members">${g.members.map(row).join("")}</div></details>`).join("")}
+    <p class="dim chart-note">Udziały pochodzą z różnych dat (fundusze raportują co pół roku), więc sumy są przybliżone.
+      Akcjonariat rozproszony to 100% minus wszystkie znane udziały.</p></div>`;
+}
+
 function sparkline(prices) {
   if (prices.length < 2) return `<p class="dim">Wykres pojawi się po kilku dniach zbierania notowań.</p>`;
   const v = prices.map((p) => p.close), mn = Math.min(...v), mx = Math.max(...v), W = 700, H = 90;
@@ -252,26 +436,23 @@ async function openCompany(t) {
   const d = await api(`/api/company/${encodeURIComponent(t)}`);
   const row = tblCompanies?.getRow(t)?.getData() || {};
   const c = d.company;
-  const latestDate = {};
-  d.holders.filter((h) => h.source === "BR").forEach((h) => { if (!latestDate[h.holder_norm] || h.date_upd > latestDate[h.holder_norm]) latestDate[h.holder_norm] = h.date_upd; });
-  const cur = d.holders.filter((h) => h.source === "BR" && latestDate[h.holder_norm] === h.date_upd).sort((a, b) => (b.pct || 0) - (a.pct || 0));
+  drawerData = d;
   $("#drawerBody").innerHTML = `
     <h2>${esc(c.ticker)} · ${esc(c.full_name || c.short_name)}</h2>
     <div class="dim">${esc(c.market === "NC" ? "NewConnect" : "GPW")}${c.sector ? " · " + esc(c.sector) : ""}${c.isin ? " · " + esc(c.isin) : ""}
       ${c.slug ? `· <a href="https://www.biznesradar.pl/notowania/${encodeURIComponent(c.slug)}" target="_blank" rel="noopener">profil w Biznesradar</a>` : "· wycofana z obrotu (brak w Biznesradar)"}</div>
     <div class="facts">
-      <div><b>${fmtNum(row.price)}</b><span>Kurs</span></div>
-      <div><b>${fmtMoney(row.mcap)}</b><span>Kapitalizacja</span></div>
-      <div><b>${row.cz == null ? "–" : fmtNum(row.cz, 1)}</b><span>C/Z</span></div>
-      <div><b>${row.cwk == null ? "–" : fmtNum(row.cwk, 1)}</b><span>C/WK</span></div>
-      <div><b>${row.div_yield == null ? "–" : fmtNum(row.div_yield, 2) + "%"}</b><span>Stopa dywidendy</span></div>
-      <div><b>${row.flow_30d == null ? "–" : fmtMoney(row.flow_30d)}</b><span>Przepływ 30 dni</span></div>
+      ${fact("price", fmtNum(row.price), row.price)}
+      ${fact("mcap", fmtMoney(row.mcap), row.mcap)}
+      ${fact("cz", row.cz == null ? "–" : fmtNum(row.cz, 1), row.cz)}
+      ${fact("cwk", row.cwk == null ? "–" : fmtNum(row.cwk, 1), row.cwk)}
+      ${fact("dy", row.div_yield == null ? "–" : fmtNum(row.div_yield, 2) + "%", row.div_yield)}
+      ${fact("flow", row.flow_30d == null ? "–" : (row.flow_30d > 0 ? "+" : "") + fmtMoney(row.flow_30d), row.flow_30d)}
     </div>
-    ${sparkline(d.prices)}
+    <p class="dim chart-note">Najedź na wskaźnik (albo zaznacz go klawiszem Tab), żeby zobaczyć objaśnienie. Progi są orientacyjne, to nie rekomendacja.</p>
+    <section id="companyChart" aria-label="Wykres"><div class="chart-ctl"></div><div class="chart-body"></div></section>
     <h3>Akcjonariat (ostatni odczyt)</h3>
-    ${cur.length ? `<table><tr><th>Akcjonariusz</th><th class="n">Udział</th><th class="n">Akcje</th><th>Stan na</th></tr>
-      ${cur.map((h) => `<tr><td>${esc(h.holder)}</td><td class="n">${fmtNum(h.pct, 2)}%</td><td class="n">${fmtNum(h.shares, 0)}</td><td>${esc(h.date_upd)}</td></tr>`).join("")}</table>`
-      : `<p class="dim">Akcjonariat pobiera się raz w tygodniu.</p>`}
+    ${holderGroups(d.holder_groups || [])}
     <h3>Zmiany stanu posiadania</h3>
     ${d.changes.length ? `<table><tr><th>Data</th><th>Inwestor</th><th class="n">Zmiana akcji</th><th class="n">Wartość</th><th>Źródło</th></tr>
       ${d.changes.slice(0, 40).map((x) => `<tr${x.excluded ? ' class="dim"' : ""}><td>${esc(x.date)}</td><td>${esc(x.investor)}</td>
@@ -285,6 +466,10 @@ async function openCompany(t) {
     ${d.espi.length ? `<table>${d.espi.slice(0, 25).map((x) => `<tr><td style="white-space:nowrap">${esc(x.ts.slice(0, 10))}</td><td><span class="tag ${x.category}">${esc(catLabel[x.category] || x.category)}</span></td>
       <td><a href="${esc(espiHref(x.url))}" target="_blank" rel="noopener">${esc(x.title)}</a></td></tr>`).join("")}</table>` : `<p class="dim">Brak komunikatów w bazie.</p>`}`;
   $("#drawer").classList.add("open"); $("#drawer").setAttribute("aria-hidden", "false");
+  renderChart();
+  // dymek wskaźnika przy prawej krawędzi panelu otwiera się w lewo, żeby nie wychodził poza panel
+  const facts = $("#drawerBody .facts");
+  $$(".fact", facts).forEach((f) => f.classList.toggle("edge", f.offsetLeft + 300 > facts.clientWidth));
 }
 
 /* ---------- inwestorzy ---------- */

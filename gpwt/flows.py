@@ -13,10 +13,12 @@ To szacunek - faktyczna cena transakcji (np. w ABB, poza sesją) może się ró�
 import difflib
 import json
 import logging
+import re
+import time
 from datetime import date, timedelta
 
 from . import biznesradar as br
-from .util import iso_week, norm_investor
+from .util import ascii_fold, iso_week, norm_investor
 
 log = logging.getLogger("gpwt.flows")
 
@@ -188,6 +190,73 @@ def fill_prices(con, max_tickers=80):
         con.commit()
     con.commit()
     return {"prices_filled": filled, "price_histories_fetched": fetched}
+
+
+# instytucje finansowe spoza nazewnictwa OFE/TFI (np. fundusz suwerenny Norwegii)
+_INSTITUTIONS = re.compile(r"norges bank|blackrock|vanguard|fidelity|invesco|templeton|schroders|aberdeen|"
+                           r"asset management|investment management|\bfunds?\b|fundusz|capital group|"
+                           r"jpmorgan|goldman sachs|morgan stanley|state street|dimensional", re.I)
+_matcher = {"m": None, "at": 0.0}
+
+
+def _company_matcher(con):
+    """ofe.Matcher (nazwa -> ticker) do rozpoznania akcji własnych; budowany raz na kilka godzin."""
+    if _matcher["m"] is None or time.monotonic() - _matcher["at"] > 6 * 3600:
+        from .ofe import Matcher
+        _matcher["m"], _matcher["at"] = Matcher(con), time.monotonic()
+    return _matcher["m"]
+
+
+def holder_kind(holder, holder_norm, ticker, matcher=None):
+    """owners = właściciele, funds = fundusze i instytucje, rest = akcje własne spółki."""
+    if any(t in holder_norm.split() for t in FUND_RE) or _INSTITUTIONS.search(ascii_fold(holder)):
+        return "funds"
+    if "akcje wlasne" in holder_norm or "own shares" in holder_norm:
+        return "rest"
+    if matcher:
+        from .ofe import _key
+        words = set(_key(holder).split())
+        # spółka jako własny akcjonariusz: "X-Trade Brokers S.A." w "X-Trade Brokers Dom Maklerski"
+        if words and sum(len(w) for w in words) >= 4 and any(
+                words <= set(n.split()) for n in matcher.names_of.get(ticker, ())):
+            return "rest"
+    return "owners"
+
+
+def holder_groups(con, ticker):
+    """Ostatni odczyt akcjonariatu (Biznesradar) w trzech grupach: właściciele, fundusze, pozostali
+    (akcje własne + wyliczony akcjonariat rozproszony = 100% minus znane udziały)."""
+    rows = con.execute(
+        "SELECT h.holder, h.holder_norm, h.pct, h.shares, h.date_upd FROM holdings_snap h JOIN "
+        "(SELECT holder_norm, MAX(date_upd) d FROM holdings_snap WHERE ticker=? AND source='BR' GROUP BY holder_norm) m "
+        "ON h.holder_norm=m.holder_norm AND h.date_upd=m.d WHERE h.ticker=? AND h.source='BR' ORDER BY h.pct DESC",
+        (ticker, ticker)).fetchall()
+    if not rows:
+        return []
+    m = _company_matcher(con)
+    groups = {k: [] for k in ("owners", "funds", "rest")}
+    for r in rows:
+        groups[holder_kind(r["holder"], r["holder_norm"], ticker, m)].append(
+            {"holder": r["holder"], "pct": r["pct"], "shares": r["shares"], "date_upd": r["date_upd"]})
+    known = sum(r["pct"] or 0 for r in rows)
+    total_shares = (con.execute("SELECT shares FROM companies WHERE ticker=?", (ticker,)).fetchone() or [None])[0]
+    if known < 100:
+        free = round(100 - known, 2)
+        groups["rest"].append({"holder": "Akcjonariat rozproszony (wyliczony: 100% minus znane udziały)",
+                               "pct": free, "shares": round(total_shares * free / 100) if total_shares else None,
+                               "date_upd": None, "computed": True})
+    labels = {"owners": "Właściciele", "funds": "Fundusze (OFE, TFI, DFE i inne instytucje)",
+              "rest": "Pozostały akcjonariat"}
+    out = []
+    for k, members in groups.items():
+        if not members:
+            continue
+        dates = [x["date_upd"] for x in members if x["date_upd"]]
+        out.append({"key": k, "label": labels[k], "members": members,
+                    "pct": round(sum(x["pct"] or 0 for x in members), 2),
+                    "shares": sum(x["shares"] or 0 for x in members) or None,
+                    "date_from": min(dates) if dates else None, "date_to": max(dates) if dates else None})
+    return out
 
 
 def aliases(con):
