@@ -362,6 +362,22 @@ def test_pipeline():
     assert cl.get("/api/status").get_json()["counts"]["companies"] == 7
     assert any(r["ticker"] == "SHO" for r in rows)  # wycofana spółka widoczna w widoku Spółki
     assert cl.post("/api/aliases", json={"alias_norm": out["investor_norm"], "canonical": "Hegen Invest"}).status_code == 200
+    # analizy fundamentalne: przypisanie po tickerze, po nazwie spółki, plik nieprzypisany
+    from gpwt import analyses
+    analyses.AF_DIR = TMP / "analyses"
+    analyses.AF_DIR.mkdir()
+    (analyses.AF_DIR / "PKO_Analiza_Fundamentalna.docx").write_bytes(b"x")
+    (analyses.AF_DIR / "Outdoorzy_analiza_2026-09-25.pdf").write_bytes(b"%PDF-1.4 x")
+    (analyses.AF_DIR / "notatki_rozne.txt").write_text("y")
+    rows = {r["ticker"]: r for r in cl.get("/api/companies").get_json()}
+    assert rows["PKO"]["af_count"] == 1 and rows["OUT"]["af_date"] == "2026-09-25" and rows["CPD"]["af_date"] is None
+    afs = cl.get("/api/analyses").get_json()
+    assert afs["assigned"] == 2 and [a["name"] for a in afs["unassigned"]] == ["notatki_rozne.txt"], afs
+    assert cl.get("/api/company/OUT").get_json()["analyses"][0]["file"] == "Outdoorzy_analiza_2026-09-25.pdf"
+    assert cl.get("/af/Outdoorzy_analiza_2026-09-25.pdf").data.startswith(b"%PDF")
+    assert cl.get("/af/../test.sqlite").status_code == 404
+    assert any(c["key"] == "ocena_af" for c in cl.get("/api/columns").get_json())
+
     # logowanie: bez hasła w konfiguracji dostęp lokalny jak dotąd, z hasłem każde zapytanie wymaga logowania
     import base64
     config.AUTH_PASSWORD = "tajne"

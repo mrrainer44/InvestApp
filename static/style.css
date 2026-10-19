@@ -132,10 +132,14 @@ input[type="search"] { min-width: 220px; }
 .drawer th { color: var(--muted); font-weight: 500; font-family: "IBM Plex Sans", sans-serif; }
 .drawer td.n, .drawer th.n { text-align: right; }
 .facts { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px 18px; margin-top: 12px; }
-.fact { position: relative; border-left: 2px solid var(--line); padding-left: 8px; cursor: help; border-radius: 2px; }
+.facts > div { border-left: 2px solid var(--line); padding-left: 8px; }
+.facts > div > b { display: block; font-family: var(--mono); font-size: 16px; }
+.facts > div > span { color: var(--muted); font-size: 12px; }
+.fact { position: relative; cursor: help; border-radius: 2px; }
 .fact:hover, .fact:focus { border-left-color: var(--accent); outline: none; }
-.fact b { display: block; font-family: var(--mono); font-size: 16px; }
-.fact > span { color: var(--muted); font-size: 12px; }
+.af-yes { color: var(--gain); font-family: var(--mono); }
+.af-rating { font-size: 12px; font-weight: 500; padding: 1px 8px; border-radius: 999px; margin-left: 8px;
+  background: var(--accent-soft); color: var(--accent); vertical-align: 2px; }
 .fact .lvl { margin-left: 6px; vertical-align: -2px; }
 .lvl-legend .lvl { width: 12px; height: 12px; vertical-align: -2px; }
 .lvl .bg { stroke: none; }

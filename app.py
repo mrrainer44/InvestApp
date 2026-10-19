@@ -9,12 +9,27 @@ from datetime import date, datetime, timedelta
 
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
-from gpwt import collect, config, db, flows
+from gpwt import analyses, collect, config, db, flows
 from gpwt.config import ROOT, SERVER_HOST, SERVER_PORT
 from gpwt.util import ascii_fold, norm_investor
 
 app = Flask(__name__, static_folder=str(ROOT / "static"), static_url_path="/static")
 db.init()
+
+
+def _ensure_af_rating_column():
+    """Kolumna "Ocena AF" tworzona raz - jeśli użytkownik ją usunie, nie wraca."""
+    with db.session() as c:
+        if c.execute("SELECT 1 FROM settings WHERE key='af_rating_column'").fetchone():
+            return
+        if not c.execute("SELECT 1 FROM custom_columns WHERE key='ocena_af'").fetchone():
+            c.execute("INSERT INTO custom_columns VALUES(?,?,?,?,?)",
+                      ("ocena_af", "Ocena AF", "list", json.dumps(["Warto", "Obserwuj", "Nie warto"], ensure_ascii=False),
+                       datetime.now().isoformat(timespec="seconds")))
+        c.execute("INSERT INTO settings VALUES('af_rating_column', '1')")
+
+
+_ensure_af_rating_column()
 _job = {"running": False, "last": None}
 _job_lock = threading.Lock()
 
@@ -78,6 +93,7 @@ def companies():
     custom = {}
     for r in c.execute("SELECT * FROM custom_values"):
         custom.setdefault(r["ticker"], {})[f"c_{r['key']}"] = r["value"]
+    af = analyses.scan(c)
 
     out = []
     for co in c.execute("SELECT * FROM companies ORDER BY ticker"):
@@ -120,6 +136,8 @@ def companies():
             .replace(",", " ") if la else None,
             "flow_30d": f30["v"] if f30 else None,
             "flow_30d_n": f30["n"] if f30 else None,
+            "af_date": af[t][0]["date"] if af.get(t) else None,
+            "af_count": len(af.get(t, [])),
         }
         row.update(custom.get(t, {}))
         out.append(row)
@@ -143,9 +161,26 @@ def company(ticker):
         "dividends": db.rows(c, "SELECT * FROM dividends WHERE ticker=? ORDER BY last_day DESC", (ticker,)),
         "prices": db.rows(c, "SELECT date, close FROM price_history WHERE ticker=? ORDER BY date", (ticker,)),
         "holder_groups": flows.holder_groups(c, ticker),
+        "analyses": analyses.scan(c).get(ticker, []),
     }
     c.close()
     return jsonify(res)
+
+
+# ---------------- analizy fundamentalne (pliki z OneDrive) ----------------
+
+@app.get("/api/analyses")
+def list_analyses():
+    c = con()
+    af = analyses.scan(c)
+    c.close()
+    return jsonify({"assigned": sum(len(v) for k, v in af.items() if k), "unassigned": af.get(None, []),
+                    "companies": len([k for k in af if k]), "last_sync": analyses.last_sync()})
+
+
+@app.get("/af/<path:rel>")
+def analysis_file(rel):
+    return send_from_directory(analyses.AF_DIR, rel)
 
 
 # ---------------- własne kolumny ----------------

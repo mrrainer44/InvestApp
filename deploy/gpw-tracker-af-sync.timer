@@ -1,0 +1,10 @@
+[Unit]
+Description=GPW Tracker - synchronizacja analiz z OneDrive co 15 minut
+
+[Timer]
+OnBootSec=2min
+OnCalendar=*:0/15
+Persistent=true
+
+[Install]
+WantedBy=timers.target

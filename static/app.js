@@ -50,8 +50,10 @@ const numSort = (a, b) => (a ?? -Infinity) - (b ?? -Infinity);
 /* ---------- kolumny listy spółek ---------- */
 const GROUPS = {
   base: "Podstawowe", quote: "Notowania", ret: "Stopy zwrotu", val: "Wycena",
-  div: "Dywidendy", own: "Akcjonariat i przepływy", custom: "Moje kolumny",
+  div: "Dywidendy", own: "Akcjonariat i przepływy", af: "Analiza fundamentalna", custom: "Moje kolumny",
 };
+const afFmt = (cell) => cell.getValue()
+  ? `<span class="af-yes" title="Analiz: ${cell.getRow().getData().af_count}">✓ ${esc(cell.getValue())}</span>` : `<span class="dim">–</span>`;
 const BUILTIN = [
   { field: "ticker", title: "Ticker", group: "base", frozen: true, formatter: tickerFmt, headerFilter: "input", width: 86 },
   { field: "name", title: "Spółka", group: "base", headerFilter: "input", width: 190 },
@@ -84,6 +86,8 @@ const BUILTIN = [
   { field: "funds_pct", title: "Udział OFE/TFI", group: "own", hozAlign: "right", formatter: (c) => c.getValue() == null ? "" : fmtNum(c.getValue(), 1) + "%", sorter: numSort },
   { field: "last_art69", title: "Ostatnie zawiadomienie", group: "own", width: 240, tooltip: true },
   { field: "flow_30d", title: "Przepływ 30 dni", group: "own", formatter: flowFmt, sorter: numSort, width: 190 },
+  { field: "af_date", title: "AF", group: "af", formatter: afFmt, width: 118, headerTooltip: "Data najnowszej analizy fundamentalnej (plik w OneDrive)",
+    headerFilter: "tickCross", headerFilterParams: { tristate: true }, headerFilterFunc: (h, v) => h === null || h === !!v },
 ];
 const DEFAULT_VISIBLE = Object.fromEntries(BUILTIN.map((c) => [c.field, c.visible !== false]));
 const GROUP_OF = Object.fromEntries(BUILTIN.map((c) => [c.field, c.group]));
@@ -467,6 +471,13 @@ async function openCompany(t) {
     <p class="dim chart-note lvl-legend">${["good", "neutral", "warn", "bad"].map((l) => `${levelIcon(l)} ${LEVEL[l].toLowerCase()}`).join(" · ")}
       - najedź na wskaźnik, żeby zobaczyć objaśnienie. Progi są orientacyjne, to nie rekomendacja.</p>
     <section id="companyChart" aria-label="Wykres"><div class="chart-ctl"></div><div class="chart-body"></div></section>
+    <h3>Analiza fundamentalna ${row.c_ocena_af ? `<span class="af-rating">${esc(row.c_ocena_af)}</span>` : ""}</h3>
+    ${d.analyses.length ? `<table>${d.analyses.map((a) => `<tr><td style="white-space:nowrap">${esc(a.date)}</td>
+        <td><a href="/af/${a.file.split("/").map(encodeURIComponent).join("/")}" target="_blank" rel="noopener">${esc(a.name)}</a></td>
+        <td class="n dim">${fmtNum(a.size / 1024, 0)} KB</td></tr>`).join("")}</table>`
+      : `<p class="dim">Brak analizy. Zapisz plik w folderze „Analizy fundamentalne” w OneDrive z tickerem w nazwie
+          (np. ${esc(c.ticker)}_analiza.pdf) - pojawi się tu po synchronizacji (co 15 minut).</p>`}
+    <p class="dim chart-note">Ocenę (Warto / Obserwuj / Nie warto) ustawisz w kolumnie „Ocena AF” w tabeli spółek.</p>
     <h3>Akcjonariat (ostatni odczyt)</h3>
     ${holderGroups(d.holder_groups || [])}
     <h3>Zmiany stanu posiadania</h3>
@@ -618,6 +629,11 @@ async function loadSettings() {
   const s = await api("/api/status");
   const labels = { companies: "spółek", quotes: "notowań dziennych", espi: "komunikatów", changes: "zmian stanu posiadania", holdings_snap: "odczytów akcjonariatu", dividends: "dywidend" };
   $("#counts").innerHTML = Object.entries(s.counts).map(([k, v]) => `<div><b>${fmtNum(v, 0)}</b><span>${labels[k]}</span></div>`).join("");
+  const af = await api("/api/analyses");
+  $("#afStatus").innerHTML = `Przypisane: <b>${af.assigned}</b> plików do <b>${af.companies}</b> spółek
+    · ostatnia synchronizacja z OneDrive: <b>${af.last_sync ? esc(af.last_sync.replace("T", " ").slice(0, 16)) : "jeszcze nie było"}</b>
+    ${af.unassigned.length ? `<br>Nie udało się przypisać do spółki (dodaj ticker do nazwy pliku, np. CDR_analiza.pdf):
+      <ul>${af.unassigned.map((a) => `<li>${esc(a.name)}</li>`).join("")}</ul>` : ""}`;
   $("#runState").textContent = s.job_running ? "Pobieranie trwa…" : "";
   const runs = s.runs.map((r) => ({ ...r, summaryText: summarize(r.summary) }));
   if (tblRuns) tblRuns.destroy();

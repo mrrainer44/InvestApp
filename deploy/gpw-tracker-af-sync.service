@@ -1,0 +1,15 @@
+[Unit]
+Description=GPW Tracker - synchronizacja analiz fundamentalnych z OneDrive (tylko odczyt)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=gpwtracker
+EnvironmentFile=/etc/gpw-tracker.env
+# lustro folderu OneDrive -> data/analyses; usunięcie pliku w OneDrive usuwa go też tutaj
+ExecStart=/usr/bin/rclone sync --config /var/lib/gpw-tracker/rclone.conf ${GPWT_AF_REMOTE} /opt/gpw-tracker/data/analyses --exclude .last_sync --exclude "~$*"
+ExecStartPost=/bin/sh -c 'date -Iseconds > /opt/gpw-tracker/data/analyses/.last_sync'
+TimeoutStartSec=10min
+NoNewPrivileges=true
+PrivateTmp=true
