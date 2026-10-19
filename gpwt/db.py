@@ -39,6 +39,10 @@ CREATE TABLE IF NOT EXISTS changes(
   source TEXT, espi_id INTEGER, verified INTEGER DEFAULT 0, excluded INTEGER DEFAULT 0, note TEXT,
   UNIQUE(source, ticker, investor_norm, date, espi_id)
 );
+CREATE TABLE IF NOT EXISTS ohlc(
+  ticker TEXT, date TEXT, open REAL, high REAL, low REAL, close REAL, volume REAL, turnover REAL,
+  PRIMARY KEY(ticker, date)
+);
 CREATE TABLE IF NOT EXISTS price_history(
   ticker TEXT, date TEXT, close REAL, PRIMARY KEY(ticker, date)
 );

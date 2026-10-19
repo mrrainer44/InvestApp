@@ -9,7 +9,7 @@ from datetime import date, datetime, timedelta
 
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
-from gpwt import analyses, collect, config, db, flows
+from gpwt import analyses, collect, config, db, flows, pressure
 from gpwt.config import ROOT, SERVER_HOST, SERVER_PORT
 from gpwt.util import ascii_fold, norm_investor
 
@@ -94,6 +94,7 @@ def companies():
     for r in c.execute("SELECT * FROM custom_values"):
         custom.setdefault(r["ticker"], {})[f"c_{r['key']}"] = r["value"]
     af = analyses.scan(c)
+    press = pressure.all_cmf(c)
 
     out = []
     for co in c.execute("SELECT * FROM companies ORDER BY ticker"):
@@ -138,6 +139,8 @@ def companies():
             "flow_30d_n": f30["n"] if f30 else None,
             "af_date": af[t][0]["date"] if af.get(t) else None,
             "af_count": len(af.get(t, [])),
+            "cmf21": press.get(t, {}).get(21),
+            "cmf63": press.get(t, {}).get(63),
         }
         row.update(custom.get(t, {}))
         out.append(row)
@@ -162,6 +165,7 @@ def company(ticker):
         "prices": db.rows(c, "SELECT date, close FROM price_history WHERE ticker=? ORDER BY date", (ticker,)),
         "holder_groups": flows.holder_groups(c, ticker),
         "analyses": analyses.scan(c).get(ticker, []),
+        "ohlc": pressure.series(c, ticker, (date.today() - timedelta(days=400)).isoformat()),
     }
     c.close()
     return jsonify(res)

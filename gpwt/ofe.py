@@ -284,6 +284,39 @@ def parse_session(data):
     return out
 
 
+def parse_session_full(data):
+    """Jak parse_session, ale z otwarciem, max, min, wolumenem i obrotem (w zł; archiwum podaje tysiące)."""
+    rows = sheet_rows(data or b"")
+    if not rows:
+        return []
+    hdr = [ascii_fold(str(h or "")).lower() for h in rows[0]]
+
+    def col(prefix):
+        return next((i for i, h in enumerate(hdr) if h.startswith(prefix)), None)
+
+    idx = {"name": col("nazwa"), "isin": col("isin"), "open": col("kurs otwarcia"), "high": col("kurs max"),
+           "low": col("kurs min"), "close": col("kurs zamkni"), "volume": col("wolumen"), "turnover": col("obrot")}
+    if idx["name"] is None or idx["close"] is None:
+        return []
+
+    def val(r, k):
+        i = idx[k]
+        if i is None or i >= len(r) or r[i] in (None, ""):
+            return None
+        return r[i] if isinstance(r[i], (int, float)) else to_float(str(r[i]))
+
+    out = []
+    for r in rows[1:]:
+        if len(r) <= idx["close"] or not r[idx["name"]] or val(r, "close") is None:
+            continue
+        t = val(r, "turnover")
+        out.append({"name": str(r[idx["name"]]).strip(),
+                    "isin": (str(r[idx["isin"]] or "").strip() or None) if idx["isin"] is not None else None,
+                    "open": val(r, "open"), "high": val(r, "high"), "low": val(r, "low"), "close": val(r, "close"),
+                    "volume": val(r, "volume"), "turnover": t * 1000 if t is not None else None})
+    return out
+
+
 def resolve_session(con, rows, iso):
     """Wiersze archiwum gpw.pl -> {skrót: ticker}. Spółkę łączymy po ISIN, potem po skrócie (tylko gdy ISIN
     się nie kłóci); spółkę spoza companies (wycofaną z obrotu) dopisujemy."""

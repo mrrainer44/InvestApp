@@ -252,6 +252,14 @@ def test_pipeline():
     espi.pdf_text = fake_pdf_text
     db.init()
 
+    # presja kupujących: zamknięcie na maksimum = +1, na minimum = -1, za mało sesji = brak oceny
+    from gpwt import pressure
+    up = {"high": 10.0, "low": 8.0, "close": 10.0, "turnover": 100.0}
+    down = {"high": 10.0, "low": 8.0, "close": 8.0, "turnover": 100.0}
+    assert pressure.cmf([up] * 20) == 1 and pressure.cmf([down] * 20) == -1
+    assert pressure.cmf([up] * 10 + [down] * 10) == 0 and pressure.cmf([up] * 5) is None
+    assert pressure.clv({"high": 9.0, "low": 9.0, "close": 9.0}) == 0  # brak zakresu dnia
+
     # rodzaj instrumentu z formularzy MAR ("transakcja" zawiera "akcj", ale to nie akcje)
     from gpwt.espi import instrument_is_shares as is_sh
     assert is_sh("Akcje zwykłe na okaziciela") and is_sh("akcji serii B")
@@ -384,6 +392,10 @@ def test_pipeline():
     assert cl.get("/af/Outdoorzy_analiza_2026-09-25.pdf").data.startswith(b"%PDF")
     assert cl.get("/af/../test.sqlite").status_code == 404
     assert any(c["key"] == "ocena_af" for c in cl.get("/api/columns").get_json())
+    assert "cmf63" in rows["PKO"] and isinstance(cl.get("/api/company/PKO").get_json()["ohlc"], list)
+    c2 = db.connect()
+    assert c2.execute("SELECT COUNT(*) FROM ohlc WHERE ticker='PKO'").fetchone()[0] >= 1  # z dziennych notowań
+    c2.close()
 
     # logowanie: bez hasła w konfiguracji dostęp lokalny jak dotąd, z hasłem każde zapytanie wymaga logowania
     import base64

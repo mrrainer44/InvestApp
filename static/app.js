@@ -50,8 +50,12 @@ const numSort = (a, b) => (a ?? -Infinity) - (b ?? -Infinity);
 /* ---------- kolumny listy spółek ---------- */
 const GROUPS = {
   base: "Podstawowe", quote: "Notowania", ret: "Stopy zwrotu", val: "Wycena",
-  div: "Dywidendy", own: "Akcjonariat i przepływy", af: "Analiza fundamentalna", custom: "Moje kolumny",
+  div: "Dywidendy", own: "Akcjonariat i przepływy", press: "Presja kupujących", af: "Analiza fundamentalna",
+  custom: "Moje kolumny",
 };
+const cmfFmt = (cell) => { const v = cell.getValue(); if (v == null) return `<span class="dim">–</span>`;
+  const p = v * 100; return `<span class="${p > 10 ? "up" : p < -10 ? "down" : ""}">${p > 0 ? "+" : ""}${fmtNum(p, 0)}%</span>`; };
+const CMF_TIP = "Przewaga kupujących w obrocie (Chaikin Money Flow): +100% = sesje kończyły się na maksimum dnia, −100% = na minimum. Powyżej +10% akumulacja, poniżej −10% dystrybucja.";
 const afFmt = (cell) => cell.getValue()
   ? `<span class="af-yes" title="Analiz: ${cell.getRow().getData().af_count}">✓ ${esc(cell.getValue())}</span>` : `<span class="dim">–</span>`;
 const BUILTIN = [
@@ -86,6 +90,8 @@ const BUILTIN = [
   { field: "funds_pct", title: "Udział OFE/TFI", group: "own", hozAlign: "right", formatter: (c) => c.getValue() == null ? "" : fmtNum(c.getValue(), 1) + "%", sorter: numSort },
   { field: "last_art69", title: "Ostatnie zawiadomienie", group: "own", width: 240, tooltip: true },
   { field: "flow_30d", title: "Przepływ 30 dni", group: "own", formatter: flowFmt, sorter: numSort, width: 190 },
+  { field: "cmf63", title: "Presja 90 dni", group: "press", hozAlign: "right", formatter: cmfFmt, sorter: numSort, headerTooltip: CMF_TIP },
+  { field: "cmf21", title: "Presja 30 dni", group: "press", hozAlign: "right", formatter: cmfFmt, sorter: numSort, headerTooltip: CMF_TIP, visible: false },
   { field: "af_date", title: "AF", group: "af", formatter: afFmt, width: 118, headerTooltip: "Data najnowszej analizy fundamentalnej (plik w OneDrive)",
     headerFilter: "tickCross", headerFilterParams: { tristate: true }, headerFilterFunc: (h, v) => h === null || h === !!v },
 ];
@@ -265,6 +271,14 @@ const FACT_INFO = {
   dy: ["Stopa dywidendy", "Dywidendy wypłacone w ostatnich 12 miesiącach w stosunku do obecnego kursu.",
     (v) => !v ? ["neutral", "Brak dywidendy w ostatnich 12 miesiącach."] : v < 3 ? ["neutral", "Niska."]
       : v <= 7 ? ["good", "Dobra - regularny dochód gotówkowy."] : ["warn", "Bardzo wysoka - sprawdź, czy nie jednorazowa i czy spółkę na nią stać."]],
+  press: ["Presja kupujących (90 dni)", "Czy na sesjach przeważają kupujący: przewaga w obrocie z ostatnich ok. 63 sesji (CMF). Liczona z notowań, więc obejmuje cały rynek, także inwestorów, którzy niczego nie zgłaszają.",
+    (v, v30) => {
+      const s30 = v30 == null ? "" : ` 30 dni: ${v30 > 0 ? "+" : ""}${fmtNum(v30 * 100, 0)}%.`;
+      return v == null ? ["none", "Za mało sesji w historii notowań (potrzeba ok. 3 tygodni)."]
+        : v > 0.1 ? ["good", `Akumulacja - sesje częściej kończyły się blisko maksimum dnia przy dużych obrotach: przeważali kupujący.${s30}`]
+          : v < -0.1 ? ["bad", `Dystrybucja - sesje częściej kończyły się blisko minimum: przeważali sprzedający.${s30}`]
+            : ["neutral", `Równowaga kupujących i sprzedających.${s30}`];
+    }],
   flow: ["Przepływ 30 dni", "Saldo zakupów minus sprzedaży zgłoszonych przez dużych inwestorów (zawiadomienia art. 69, insiderzy, fundusze) z ostatnich 30 dni. Nie obejmuje inwestorów, którzy nie muszą się ujawniać, więc nie jest to cały ruch na akcjach.",
     (v) => !v ? ["neutral", "Brak zarejestrowanych ruchów w ostatnich 30 dniach."] : v > 0 ? ["good", "Dodatni - duzi gracze dokupowali."]
       : ["bad", "Ujemny - duzi gracze sprzedawali."]],
@@ -385,6 +399,104 @@ function bindFlowTips(root, days) {
   });
 }
 
+/* --- presja kupujących: kurs (góra) i linia akumulacji/dystrybucji (dół), wspólna oś sesji --- */
+function pressPoints(rows) {
+  let ad = 0;
+  return rows.map((r) => {
+    const h = r.high, l = r.low, c = r.close;
+    const k = h != null && l != null && h > l ? ((c - l) - (h - c)) / (h - l) : 0;
+    const mf = k * (r.turnover || 0);
+    ad += mf;
+    return { ...r, clv: k, mf, ad };
+  });
+}
+
+function pressChart(pts) {
+  if (pts.length < 2) return `<p class="dim chart-empty">Za mało sesji w tym okresie - historia notowań tej spółki dopiero się zbiera.</p>`;
+  const W = 700, L = 64, R = 74, T = 18, PH = 92, GAP = 34, B = 22, H = T + PH + GAP + PH + B, n = pts.length;
+  const x = (i) => L + (i / (n - 1)) * (W - L - R);
+  const scale = (vals, top, withZero) => {
+    let lo = Math.min(...vals, ...(withZero ? [0] : [])), hi = Math.max(...vals, ...(withZero ? [0] : []));
+    if (hi === lo) { hi += 1; lo -= 1; }
+    const pad = (hi - lo) * 0.08; lo -= pad; hi += pad;
+    return { lo, hi, y: (v) => top + (1 - (v - lo) / (hi - lo)) * PH };
+  };
+  const ps = scale(pts.map((p) => p.close), T, false), as = scale(pts.map((p) => p.ad), T + PH + GAP, true);
+  const line = (s, key) => pts.map((p, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${s.y(p[key]).toFixed(1)}`).join(" ");
+  const last = pts[n - 1];
+  const yTop2 = T + PH + GAP;
+  const hitW = (W - L - R) / (n - 1);
+  const hits = pts.map((p, i) => `<rect class="hit" x="${x(i) - hitW / 2}" y="${T}" width="${hitW}" height="${H - T - B}" data-i="${i}"
+      tabindex="${i === n - 1 ? 0 : -1}" aria-label="${p.date}: kurs ${fmtNum(p.close)}"/>`).join("");
+  return `<div class="chart-wrap"><svg class="flowchart presschart" viewBox="0 0 ${W} ${H}" role="img"
+      aria-label="Kurs i linia akumulacji/dystrybucji od ${pts[0].date} do ${last.date}">
+      <text x="${L}" y="${T - 6}" class="pl">Kurs</text>
+      <line x1="${L}" x2="${W - R}" y1="${T + PH}" y2="${T + PH}" class="gl"/>
+      <text x="${L - 6}" y="${ps.y(ps.hi) + 10}" class="yl">${fmtNum(ps.hi)}</text>
+      <text x="${L - 6}" y="${T + PH}" class="yl">${fmtNum(ps.lo)}</text>
+      <path d="${line(ps, "close")}" class="price-line"/>
+      <circle cx="${x(n - 1)}" cy="${ps.y(last.close)}" r="4" class="price-dot"/>
+      <text x="${x(n - 1) + 8}" y="${ps.y(last.close) + 4}" class="endl">${fmtNum(last.close)}</text>
+      <text x="${L}" y="${yTop2 - 6}" class="pl">Linia akumulacji/dystrybucji (napływ pieniądza)</text>
+      <line x1="${L}" x2="${W - R}" y1="${as.y(0)}" y2="${as.y(0)}" class="zero"/>
+      <text x="${L - 6}" y="${as.y(0) + 4}" class="yl">0</text>
+      <path d="${line(as, "ad")}" class="cum"/>
+      <circle cx="${x(n - 1)}" cy="${as.y(last.ad)}" r="4" class="cum-dot"/>
+      <text x="${x(n - 1) + 8}" y="${as.y(last.ad) + 4}" class="endl">${last.ad > 0 ? "+" : ""}${fmtMoney(last.ad)}</text>
+      <text x="${L}" y="${H - 6}" class="xl">${pts[0].date}</text>
+      <text x="${W - R}" y="${H - 6}" class="xl" text-anchor="end">${last.date}</text>
+      <line class="xh" x1="0" x2="0" y1="${T}" y2="${H - B}" visibility="hidden"/>
+      ${hits}</svg><div class="chart-tip" role="status" hidden></div></div>`;
+}
+
+function bindPressTips(root, pts) {
+  const tip = root.querySelector(".chart-tip"), svg = root.querySelector(".presschart");
+  if (!tip || !svg) return;
+  const xh = svg.querySelector(".xh");
+  const show = (el) => {
+    const p = pts[+el.dataset.i];
+    tip.replaceChildren();
+    const add = (cls, text) => { const s = document.createElement("div"); s.className = cls; s.textContent = text; tip.append(s); };
+    add("tv", `${fmtNum(p.close)} zł`);
+    add("tl", `sesja ${p.date}`);
+    add("tr", `zamknięcie ${p.clv > 0.3 ? "blisko maksimum" : p.clv < -0.3 ? "blisko minimum" : "w środku"} dnia (${fmtNum(p.low)}–${fmtNum(p.high)})`);
+    add("tr", `obrót ${fmtMoney(p.turnover)} · napływ dnia ${p.mf > 0 ? "+" : ""}${fmtMoney(p.mf)}`);
+    add("tr", `od początku okresu ${p.ad > 0 ? "+" : ""}${fmtMoney(p.ad)}`);
+    const cx = +el.getAttribute("x") + +el.getAttribute("width") / 2;
+    xh.setAttribute("x1", cx); xh.setAttribute("x2", cx); xh.setAttribute("visibility", "visible");
+    tip.hidden = false;
+    const box = root.getBoundingClientRect(), r = el.getBoundingClientRect();
+    tip.style.left = `${Math.min(Math.max(0, r.left - box.left + r.width / 2 - 120), box.width - 240)}px`;
+  };
+  const hide = () => { tip.hidden = true; xh.setAttribute("visibility", "hidden"); };
+  svg.querySelectorAll(".hit").forEach((h) => {
+    h.addEventListener("pointerenter", () => show(h)); h.addEventListener("focus", () => show(h));
+    h.addEventListener("pointerleave", hide); h.addEventListener("blur", hide);
+  });
+}
+
+function renderPress(body, startIso) {
+  const rows = (drawerData.ohlc || []).filter((r) => r.date >= startIso);
+  const pts = pressPoints(rows);
+  const tot = pts.reduce((s, p) => s + (p.turnover || 0), 0), mf = pts.reduce((s, p) => s + p.mf, 0);
+  const cmfP = pts.length >= 15 && tot ? mf / tot : null;
+  const recent = (drawerData.ohlc || []).slice(-31, -1), avg = recent.length ? recent.reduce((s, p) => s + (p.turnover || 0), 0) / recent.length : null;
+  const lastT = (drawerData.ohlc || []).at(-1);
+  const rel = avg && lastT ? lastT.turnover / avg : null;
+  const lvl = cmfP == null ? "none" : cmfP > 0.1 ? "good" : cmfP < -0.1 ? "bad" : "neutral";
+  body.innerHTML = `
+    <div class="chart-sum">
+      <span>presja w okresie <b>${cmfP == null ? "–" : (cmfP > 0 ? "+" : "") + fmtNum(cmfP * 100, 0) + "%"}</b> ${levelIcon(lvl)}</span>
+      <span>sesji <b>${pts.length}</b></span>
+      <span>obrót ostatniej sesji <b>${rel == null ? "–" : fmtNum(rel, 1) + "×"}</b> średniej z 30 sesji</span>
+    </div>
+    ${pressChart(pts)}
+    <p class="dim chart-note">Linia akumulacji/dystrybucji rośnie, gdy sesje kończą się blisko maksimum dnia przy dużym obrocie (przeważają kupujący),
+      a spada, gdy blisko minimum. Najciekawsze są rozbieżności z kursem: kurs stoi albo spada, a linia rośnie, to ciche skupowanie
+      (akumulacja); kurs rośnie, a linia spada, to wzrost bez kupujących. Dane obejmują cały rynek, ale nie mówią, kto kupuje.</p>`;
+  bindPressTips(body, pts);
+}
+
 function renderChart() {
   const host = $("#companyChart");
   if (!host || !drawerData) return;
@@ -395,12 +507,16 @@ function renderChart() {
   const net = sum("net");
   host.querySelector(".chart-ctl").innerHTML = `
     <div class="seg" role="group" aria-label="Rodzaj wykresu">
-      ${[["flow", "Przepływy"], ["price", "Kurs"]].map(([k, l]) => `<button data-mode="${k}" aria-pressed="${mode === k}">${l}</button>`).join("")}</div>
+      ${[["flow", "Przepływy"], ["press", "Presja"], ["price", "Kurs"]].map(([k, l]) => `<button data-mode="${k}" aria-pressed="${mode === k}">${l}</button>`).join("")}</div>
     <div class="seg" role="group" aria-label="Okres">
       ${PERIODS.map((p) => `<button data-days="${p}" aria-pressed="${days === p}">${p} dni</button>`).join("")}</div>`;
   const body = host.querySelector(".chart-body");
   if (mode === "price") {
     body.innerHTML = sparkline(drawerData.prices.filter((p) => p.date >= startIso));
+    return;
+  }
+  if (mode === "press") {
+    renderPress(body, startIso);
     return;
   }
   body.innerHTML = `
@@ -469,6 +585,7 @@ async function openCompany(t) {
       ${fact("cwk", row.cwk == null ? "–" : fmtNum(row.cwk, 1), row.cwk)}
       ${fact("dy", row.div_yield == null ? "–" : fmtNum(row.div_yield, 2) + "%", row.div_yield)}
       ${fact("flow", row.flow_30d == null ? "–" : (row.flow_30d > 0 ? "+" : "") + fmtMoney(row.flow_30d), row.flow_30d)}
+      ${fact("press", row.cmf63 == null ? "–" : (row.cmf63 > 0 ? "+" : "") + fmtNum(row.cmf63 * 100, 0) + "%", row.cmf63, row.cmf21)}
     </div>
     <p class="dim chart-note lvl-legend">${["good", "neutral", "warn", "bad"].map((l) => `${levelIcon(l)} ${LEVEL[l].toLowerCase()}`).join(" · ")}
       - najedź na wskaźnik, żeby zobaczyć objaśnienie. Progi są orientacyjne, to nie rekomendacja.</p>

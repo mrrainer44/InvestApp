@@ -183,6 +183,11 @@ input[type="search"] { min-width: 220px; }
 .flowchart .cum { fill: none; stroke: var(--accent); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
 .flowchart .cum-dot { fill: var(--accent); stroke: var(--panel); stroke-width: 2; }
 .flowchart .hit { fill: transparent; cursor: pointer; outline: none; }
+.flowchart .pl { fill: var(--ink); font: 600 12px "IBM Plex Sans", sans-serif; }
+.flowchart .price-line { fill: none; stroke: var(--muted); stroke-width: 2; stroke-linejoin: round; }
+.flowchart .price-dot { fill: var(--muted); stroke: var(--panel); stroke-width: 2; }
+.flowchart .xh { stroke: var(--muted); stroke-width: 1; pointer-events: none; }
+.chart-sum .lvl { width: 13px; height: 13px; vertical-align: -2px; }
 .flowchart .hit:focus-visible { fill: color-mix(in srgb, var(--accent) 12%, transparent); }
 .chart-tip { position: absolute; top: 0; width: 240px; pointer-events: none; z-index: 5; background: var(--panel);
   border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 8px 24px rgba(16, 24, 32, .18);

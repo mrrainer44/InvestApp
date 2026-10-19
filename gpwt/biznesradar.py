@@ -72,6 +72,7 @@ def _col(headers, *names):
 def parse_quotes(html):
     h, rows = parse_profile_table(html)
     ik, ich, iv, io = _col(h, "kurs"), _col(h, "zmiana %"), _col(h, "wolumen"), _col(h, "obrót")
+    iop, imin, imax = _col(h, "otw."), _col(h, "min."), _col(h, "max.")
     res = []
     for r in rows:
         c = r["cells"]
@@ -80,6 +81,9 @@ def parse_quotes(html):
                     "change_pct": num(c[ich]) if ich is not None else None,
                     "volume": num(c[iv]) if iv is not None else None,
                     "turnover": num(c[io]) if io is not None else None,
+                    "open": num(c[iop]) if iop is not None else None,
+                    "low": num(c[imin]) if imin is not None else None,
+                    "high": num(c[imax]) if imax is not None else None,
                     "time": c[1] if len(c) > 1 else None})
     return res
 

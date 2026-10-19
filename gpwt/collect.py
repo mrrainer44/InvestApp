@@ -14,7 +14,7 @@ import traceback
 from datetime import date, datetime, timedelta
 
 from . import biznesradar as br
-from . import db, espi, flows, gpwpl, http, ofe
+from . import db, espi, flows, gpwpl, http, ofe, pressure
 from .config import (ESPI_FIRST_RUN_PAGES, ESPI_MAX_PAGES, LOG_DIR, MARKETS, MAX_PDF_BYTES,
                      PDF_CACHE, RATIOS)
 from .util import norm_company, norm_investor
@@ -68,6 +68,10 @@ def collect_market_tables(con, stats):
                 con.execute("INSERT OR REPLACE INTO quotes VALUES(?,?,?,?,?,?)",
                             (r["ticker"], td, r["close"], r["change_pct"], r["volume"], r["turnover"]))
                 con.execute("INSERT OR REPLACE INTO price_history VALUES(?,?,?)", (r["ticker"], td, r["close"]))
+                if r.get("turnover"):  # tylko spółki z handlem tego dnia - do wskaźników presji kupujących
+                    con.execute("INSERT OR REPLACE INTO ohlc VALUES(?,?,?,?,?,?,?,?)",
+                                (r["ticker"], td, r.get("open"), r.get("high"), r.get("low"), r["close"],
+                                 r["volume"], r["turnover"]))
         con.commit()
 
         ret = br.fetch_returns(mkt)
@@ -314,18 +318,23 @@ def store_wz_snapshots(con):
     con.commit()
 
 
-def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, ofe_only=False):
+def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, ofe_only=False, ohlc_days=None):
     setup_logging()
     db.init()
     stats = {}
     con = db.connect()
-    kind = "ofe" if ofe_only else "backfill" if since else ("weekly" if weekly else "daily")
+    kind = ("sesje" if ohlc_days else "ofe" if ofe_only else "backfill" if since
+            else ("weekly" if weekly else "daily"))
     run_id = con.execute("INSERT INTO runs(started, kind, status) VALUES(?,?,?)", (now(), kind, "running")).lastrowid
     con.commit()
     status = "ok"
     try:
+        if ohlc_days:  # tylko historia notowań sesyjnych GPW (do wskaźników presji kupujących)
+            pressure.backfill(con, ohlc_days, stats)
+            return status, stats
         if not since and not ofe_only:
             collect_market_tables(con, stats)
+            pressure.backfill(con, 10, stats)  # uzupełnia sesje GPW z ostatnich dni, gdyby pobieranie wypadło
         if not skip_espi and not ofe_only:
             collect_espi(con, stats, max_pages=max_pages or (500 if since else None), since=since)
             if since:
@@ -365,7 +374,9 @@ if __name__ == "__main__":
     ap.add_argument("--max-pages", type=int, help="limit stron listy komunikatów (domyślnie 500 przy --since)")
     ap.add_argument("--ofe", action="store_true",
                     help="tylko struktury portfeli OFE (od 31.12.2024) i przeliczenie zmian")
+    ap.add_argument("--ohlc-history", type=int, metavar="DNI",
+                    help="tylko historia notowań sesyjnych GPW z archiwum gpw.pl za ostatnie DNI dni (np. 400)")
     a = ap.parse_args()
     st, _ = run(weekly=a.weekly, limit=a.limit, skip_espi=a.skip_espi, since=a.since, max_pages=a.max_pages,
-                ofe_only=a.ofe)
+                ofe_only=a.ofe, ohlc_days=a.ohlc_history)
     sys.exit(0 if st == "ok" else 1)
