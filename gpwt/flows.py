@@ -78,18 +78,23 @@ def rebuild_changes(con):
                 if instr and not espi.instrument_is_shares(instr):
                     reason = f"instrument: {instr}"
                 elif not instr and price:
-                    # formularz bez rodzaju instrumentu: cena kilka razy inna niż kurs akcji = obligacje, kontrakty itp.
-                    # (przy "akcje" wierzymy formularzowi - programy motywacyjne bywają po cenie nominalnej)
+                    # formularz bez rodzaju instrumentu: cena za sztukę kilka razy wyższa od kursu akcji = obligacje,
+                    # kontrakty itp. Niższa bywa prawdziwymi akcjami (program motywacyjny, cena nominalna).
                     mkt = near_price(con, row["ticker"], d)
-                    if mkt and not (1 / 3 <= price / mkt <= 3):
+                    if mkt and price / mkt > 3:
                         reason = f"cena {price:,.2f} zł przy kursie akcji ok. {mkt:,.2f} zł".replace(",", " ")
+                base_note = note
                 if reason:
                     note += f" [{reason} - to nie akcje, wykluczone z sum]"
                 _ins(con, **base, price=price, price_src="MAR" if price else None,
                      value=(f["delta"] * price) if price else None, excluded=1 if reason else 0, note=note)
-                if reason:  # już zapisana zmiana z dawną (błędną) oceną
+                # ocena jest wyliczana - uzgadniamy już zapisane zmiany (nie ruszamy sprawdzonych ręcznie)
+                if reason:
                     con.execute("UPDATE changes SET excluded=1, note=? WHERE source='mar' AND espi_id=? "
                                 "AND excluded=0 AND verified=0", (note, base["espi_id"]))
+                else:
+                    con.execute("UPDATE changes SET excluded=0, note=? WHERE source='mar' AND espi_id=? AND verified=0 "
+                                "AND note LIKE '%to nie akcje, wykluczone z sum]'", (base_note, base["espi_id"]))
                 n["chg_mar"] += 1
 
     # --- różnice w kolejnych odczytach akcjonariatu ---
