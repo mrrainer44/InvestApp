@@ -63,7 +63,8 @@ def classify(title):
 
 
 _NOT_SHARES = re.compile(r"obligacj|warrant|opcj|prawa do akcji|\bPDA\b|certyfikat|kontrakt|terminow|swap|forward|"
-                         r"futures|walut|uprawnie\w* do emisji|emisji gaz|\bCO2\b|jednost\w* uczestnictwa|instrument\w* pochodn",
+                         r"futures|walut|uprawnie\w* do emisji|emisji gaz|\bCO2\b|jednost\w* uczestnictwa|instrument\w* pochodn|"
+                         r"\b(euro)?bonds?\b|\bnotes?\b|derivativ|\bCFDs?\b|\boptions?\b|rights? to (acquire|subscribe)",
                          re.I)
 
 

@@ -266,6 +266,8 @@ def test_pipeline():
     assert not is_sh("Negocjowana terminowa transakcja wymiany walut")
     assert not is_sh("uprawnienia do emisji gazów cieplarnianych") and not is_sh("Kontrakt terminowy na akcje PGE")
     assert not is_sh("Obligacje") and not is_sh("Instrument dłużny")
+    assert is_sh("MOL ordinary shares (ISIN: HU0000153937)") and is_sh("Shares in Kernel Holding S.A.")
+    assert not is_sh("MOL Eurobond (ISIN: XS3515070046)") and not is_sh("Warrants on shares of Sopharma AD")
 
     # angielskie komunikaty zagranicznych emitentów
     cl = espi.classify
