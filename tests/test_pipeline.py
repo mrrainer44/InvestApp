@@ -306,6 +306,21 @@ def test_pipeline():
     assert en["investor"] == "Gašper Kastelic" and en["delta"] == 122 and en["event_date"] == "2026-03-02"
     assert collect.stale_quote("16 paź 09:56") and not collect.stale_quote("16:59")
 
+    # korekta zawiadomienia MAR zastępuje pierwotne (nie liczymy tej samej transakcji dwa razy)
+    import json
+    import sqlite3
+    mem = sqlite3.connect(":memory:")
+    mem.row_factory = sqlite3.Row
+    mem.executescript(db.SCHEMA)
+    form = {"investor": "Krzysztof Kucharski", "delta": -25000, "price": 28.0, "instrument": "akcje"}
+    for i, (ts, title, price) in enumerate([("2026-02-26 18:00", "AB SA (3/2026) Zawiadomienie o transakcjach", 28.0),
+                                            ("2026-02-27 17:00", "AB SA (4/2026) Otrzymanie korekty zawiadomienia", 28.4)]):
+        mem.execute("INSERT INTO espi(id, ticker, title, ts, category, parsed, fetched) VALUES(?,?,?,?,?,?,1)",
+                    (i + 1, "ABE", title, ts, "mar", json.dumps({"forms": [{**form, "price": price}]})))
+    flows.rebuild_changes(mem)
+    ch = {r["price"]: r["excluded"] for r in mem.execute("SELECT price, excluded FROM changes")}
+    assert ch == {28.0: 1, 28.4: 0}, ch
+
     # Bankier.pl: lista komunikatów spółki (bez artykułów redakcji i bocznych list innych spółek) i dopasowanie
     from gpwt import bankier
     li = ('<li><span>{d}</span><a href="/wiadomosc/{p}-{s}-{i}.html">{t}</a><span>{k}</span></li>')

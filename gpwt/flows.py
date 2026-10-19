@@ -15,7 +15,7 @@ import json
 import logging
 import re
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 from . import biznesradar as br
 from . import espi
@@ -129,6 +129,22 @@ def rebuild_changes(con):
         if any(o["ticker"] == c["ticker"] and o["investor_norm"] == c["investor_norm"]
                and abs((date.fromisoformat(o["date"]) - date.fromisoformat(c["date"][:10])).days) <= 10 for o in ofe):
             con.execute("UPDATE changes SET excluded=1, note=note||' [duplikat struktury OFE]' WHERE id=?", (c["id"],))
+
+    # --- korekta zawiadomienia zastępuje pierwotne (ta sama osoba i liczba akcji, opublikowane do 45 dni wcześniej)
+    q = ("SELECT c.id, c.ticker, c.investor_norm, c.delta, c.source, e.ts FROM changes c JOIN espi e ON e.id=c.espi_id/10 "
+         "WHERE c.source IN ('mar','art69') AND c.excluded=0")
+    fixes = con.execute(q + " AND (e.title LIKE '%korekt%' OR e.title LIKE '%correction%')").fetchall()
+    if fixes:
+        fix_ids = {f["id"] for f in fixes}
+        others = [o for o in con.execute(q + " AND c.verified=0").fetchall() if o["id"] not in fix_ids]
+        for f in fixes:
+            t1 = datetime.fromisoformat(f["ts"][:16])
+            for o in others:
+                if (o["ticker"], o["source"], o["delta"]) == (f["ticker"], f["source"], f["delta"]) \
+                        and 0 <= (t1 - datetime.fromisoformat(o["ts"][:16])).days <= 45 \
+                        and similar_investor(o["investor_norm"], f["investor_norm"]):
+                    con.execute("UPDATE changes SET excluded=1, note=COALESCE(note,'')||' [zastąpione korektą]' "
+                                "WHERE id=? AND excluded=0", (o["id"],))
 
     # --- deduplikacja: zmiana z akcjonariatu/WZ, która jest już w zawiadomieniu art. 69 ---
     art = con.execute("SELECT ticker, investor_norm, date, delta FROM changes WHERE source='art69'").fetchall()
