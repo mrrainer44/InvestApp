@@ -29,6 +29,18 @@ _RULES = [
               r"(zwi[eę]kszeni|zmniejszeni)\w* (stanu|udzia)|"
               r"zawiadomie\w* (od|otrzyman\w* od)\s+(?!.*\b(ZUS|KNF|UOKiK|s[aą]d\w*|urz[eę]d\w*|komisj\w*|prokurat\w*|KDPW|GPW)\b)"),
     ("skup", r"skup\w* akcji w[lł]asnych|nabyci\w* akcji w[lł]asnych"),
+    # zagraniczni emitenci (MOL, KRKA, Kernel, Sopharma, Pepco...) publikują po angielsku
+    ("wz_lista", r"shareholders?\s+(holding|with|having)\s+(at least|more than|over)\s+5\s*%"),
+    ("mar", r"\bPDMRs?\b|discharging\s+manag\w+\s+responsibilit|closely\s+associated|"
+            r"manager'?s'?\s+transactions?|notification\s+(of|on)\s+manager\w*\s+transaction|"
+            r"directors?'?\s+(dealings?|transactions?)|596/2014\s+for\s+(transactions?|a\s+pledge|pledge)|"
+            r"^notification\s+of\s+transactions?$"),
+    ("wezwanie", r"(mandatory|voluntary|non-competitive)\s+(\w+\s+)?tender\s+offer|takeover\s+bid|"
+                 r"tender\s+offer\s+(to|for)\s+(buy|acquire|purchase)\w*(-up)?\s+(the\s+)?(remaining\s+)?(\w+\s+)?shares"),
+    ("art69", r"major\s+holdings?|large\s+shareholding|significant\s+(holding|shareholding)|"
+              r"acquisition\s+of\s+voting\s+rights|(threshold|thresholds)\s+(of|was|were|has|crossed|exceeded)|"
+              r"crossing\s+(of\s+)?(the\s+)?threshold|article\s+145\b.*(POSA|public\s+offering)"),
+    ("skup", r"treasury\s+shares?|own\s+shares|buy-?\s?back|share\s+repurchase|repurchase\s+(of\s+)?(own\s+)?shares"),
 ]
 
 
@@ -225,6 +237,124 @@ def parse_mar(text):
     d = _loose_iso(_line_after("Data transakcji", t))
     if d:
         res["event_date"] = d
+    if res.get("volume") and res.get("side"):
+        res["delta"] = res["side"] * res["volume"]
+    if "delta" not in res and re.search(r"Nature of the transaction|Aggregated (information|volume)|"
+                                        r"Regulation\W+(\(EU\)\s*)?(No\.?\s*)?596/2014|\bPDMR|managerial responsib",
+                                        t, re.I):
+        en = parse_mar_en(t)
+        if en.get("delta"):
+            return {**res, **en}
+    return res
+
+
+CCY = r"PLN|zł|EUR|HUF|CZK|USD|GBP|BGN|RON|UAH|CHF|SEK|NOK|DKK"
+EN_NUM = r"(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d{1,3}(?:[  ]\d{3})+(?:[.,]\d+)?|\d+(?:[.,]\d+)?)"
+
+
+def num_en(s):
+    """Liczba z angielskiego formularza: '1,027,948' -> 1027948 ; '19.93' -> 19.93 ; '185 030' -> 185030."""
+    if s is None:
+        return None
+    s = str(s).replace("\xa0", " ").replace(" ", " ").strip()
+    if re.fullmatch(r"\d{1,3}(,\d{3})+(\.\d+)?", s):
+        s = s.replace(",", "")
+    elif re.fullmatch(r"\d{1,3}( \d{3})+([.,]\d+)?", s):
+        s = s.replace(" ", "").replace(",", ".")
+    else:
+        s = s.replace(",", ".")
+    try:
+        v = float(s)
+    except ValueError:
+        return None
+    return int(v) if v.is_integer() else v
+
+
+def _section(t, start, end):
+    m = re.search(start + r"(?P<body>.*?)(?:" + end + r"|$)", t, re.I | re.S)
+    return m.group("body") if m else ""
+
+
+def _vol_price(seg):
+    """Wolumen i cena z bloku 'Aggregated information' / 'Price(s) and volume(s)'."""
+    seg = re.sub(r"-?\s*Aggregated\s+volume|-?\s*Price\(?s?\)?(\s+and\s+volume\(?s?\)?)?|Volume\(?s?\)?", " ", seg,
+                 flags=re.I)
+    seg = re.sub(r"\b(19|20)\d{2}-\d{2}-\d{2}\b|\d{1,2}\.\d{1,2}\.\d{4}", " ", seg)  # daty to nie liczby
+    vol = price = ccy = None
+    for m in re.finditer(r"(?:(" + CCY + r")\s*)?" + EN_NUM + r"\s*(" + CCY + r")?(?:\s*/\s*(?:piece|share))?"
+                         r"(\s*(?:pieces|pcs|shares|szt))?", seg, re.I):
+        cur = m.group(1) or m.group(3)
+        v = num_en(m.group(2))
+        if v is None:
+            continue
+        if cur and price is None:
+            price, ccy = v, cur.upper().replace("ZŁ", "PLN")
+        elif not cur and vol is None and (m.group(4) or float(v).is_integer()):
+            vol = int(v)
+    return vol, price, ccy
+
+
+def parse_mar_en(text):
+    """Angielski formularz z art. 19 MAR (szablon ESMA: Name / Position/status / Nature of the transaction /
+    Aggregated information / Date of the transaction), a gdy go brak - opis w treści raportu
+    ("X, member of the Management Board, ... acquired 122 shares ... at a price of EUR 236.00")."""
+    t = text or ""
+    res = {}
+    m = re.search(r"a\)\s*Name\b[ \t]*:?[ \t]*([^\n]*)(?:\n\s*([^\n]+))?", t, re.I)
+    if m:
+        name = (m.group(1).strip() or (m.group(2) or "").strip())
+        if name and not re.match(r"\d\)|2\s+Reason", name):
+            res["investor"] = name.strip(" .,;")[:150]
+    pos = _section(t, r"Position\s*/\s*status", r"b\)\s*Initial|Initial notification")
+    if pos.strip():
+        res["position"] = re.sub(r"\s+", " ", pos).strip(" :")[:120]
+    instr = _section(t, r"financial\s+instrument,?\s+type\s+of\s+instrument", r"b\)\s*Nature|Nature of the transaction")
+    lines = [ln.strip() for ln in instr.splitlines()
+             if ln.strip() and not re.match(r"Identification\s+code|ISIN\b", ln.strip(), re.I)]
+    if lines:
+        res["instrument"] = lines[0][:120]
+        res["is_shares"] = instrument_is_shares(res["instrument"])
+    kind = _section(t, r"Nature\s+of\s+(?:the\s+)?transactions?",r"c\)\s*Price|Price\(s\)")
+    if kind.strip():
+        res["kind"] = re.sub(r"\s+", " ", kind).strip(" :")[:120]
+    agg = _section(t, r"Aggregated\s+information", r"e\)\s*Date|Date of the transaction")
+    vol, price, ccy = _vol_price(agg)
+    if vol is None:
+        vol, price, ccy = _vol_price(_section(t, r"Price\(s\)\s+and\s+volume\(s\)", r"d\)\s*Aggregated|Aggregated"))
+    d = _loose_iso(_line_after("Date of the transaction", t))
+
+    if not vol:  # bez formularza: opis w treści
+        m = re.search(r"\b(acquired|purchased|bought|subscribed\s+for|sold|disposed\s+of|transferred)\s+"
+                      r"(?:a\s+total\s+of\s+)?" + EN_NUM + r"\s+(?:\w+\s+){0,2}shares", t, re.I)
+        if m:
+            vol = num_en(m.group(2))
+            res.setdefault("kind", m.group(1).lower())
+            pm = re.search(r"price\s+(?:per\s+share\s+)?(?:of\s+)?(" + CCY + r")\s*" + EN_NUM, t[m.end():], re.I)
+            if pm:
+                price, ccy = num_en(pm.group(2)), pm.group(1).upper()
+            dm = re.findall(r"\bon\s+(\d{1,2}\s+[A-Z][a-z]+\s+\d{4}|[A-Z][a-z]+\s+\d{1,2},\s+\d{4})", t[:m.start()])
+            d = d or (any_date(dm[-1]) if dm else None)  # najbliższa data przed opisem transakcji
+            if "investor" not in res:
+                nm = re.search(r"(?:^|\n|\.\s)([A-ZŠČŽĆ][^\s,]+(?:\s+[A-ZŠČŽĆ][^\s,]+){1,3}),\s+(?:the\s+|a\s+)?"
+                               r"(?:person|member|president|chairman|chairwoman|vice|chief|CEO|CFO|COO|director|"
+                               r"head|supervisory|management)", t)
+                if nm:
+                    res["investor"] = nm.group(1).strip()[:150]
+    if vol:
+        res["volume"] = int(vol)
+    if price is not None:
+        # formularz bywa w walucie rynku macierzystego (HUF, EUR) - wtedy wartość liczymy z kursu na GPW
+        if ccy in (None, "PLN"):
+            res["price"] = price
+        else:
+            res["price_foreign"] = f"{price} {ccy}"
+    if d:
+        res["event_date"] = d
+    kl = res.get("kind", "").lower()
+    if re.search(r"acqui|purchas|\bbuy|bought|subscri|exercis", kl):
+        res["side"] = 1
+    elif re.search(r"\bsale|\bsell|sold|dispos", kl):
+        res["side"] = -1
     if res.get("volume") and res.get("side"):
         res["delta"] = res["side"] * res["volume"]
     return res

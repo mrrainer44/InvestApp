@@ -267,6 +267,43 @@ def test_pipeline():
     assert not is_sh("uprawnienia do emisji gazów cieplarnianych") and not is_sh("Kontrakt terminowy na akcje PGE")
     assert not is_sh("Obligacje") and not is_sh("Instrument dłużny")
 
+    # angielskie komunikaty zagranicznych emitentów
+    cl = espi.classify
+    assert cl("MOL RT. (95/2026) Director/PDMR transaction") == "mar"
+    assert cl("KERNEL HOLDING S.A. (27/2026) NOTIFICATION OF MANAGER'S TRANSACTION") == "mar"
+    assert cl("KRKA D.D. (10/2026) Notification of transactions by person closely associated with person "
+              "discharging managerial responsibilities") == "mar"
+    assert cl("KRKA D.D. (27/2026) Notification on change of major holdings") == "art69"
+    assert cl("NOVATURAS AB (278/2026) Notification on the acquisition of voting rights") == "art69"
+    assert cl("KRKA D.D. (43/2026) Acquisition of treasury shares") == "skup"
+    assert cl("PEPCO GROUP N.V. (1/2026) Share buyback programme: acquisition of shares from 1 - 5 April 2026") == "skup"
+    assert cl("NOVATURAS AB (1/2026) Regarding approval of circular of the non-competitive mandatory tender offer") \
+        == "wezwanie"
+    assert cl("ASTARTA HOLDING PLC (1/2026) Shareholders holding at least 5% of shares at the AGM") == "wz_lista"
+    assert cl("ENEFI PLC (57/2026) Number of voting rights") == "other"
+    assert cl("MOL RT. (78/2026) Notifications on change in voting rights") == "other"  # łączna liczba głosów
+    assert cl("SANTANDER (1/2026) Banco Santander announces a tender offer for one series of its notes") == "other"
+    en = espi.parse_mar(
+        "1. Details of the Person Discharging Managerial Responsibilities\na) Name Dr. Jan Kowalski\n"
+        "2. Reason for the notification\na) Position/status Member of the Board\nb) Initial notification/ Amendment "
+        "Initial notification\n3. Details of the issuer\na) Name MOL Plc.\n4. Details of the transaction(s): section "
+        "to be repeated for (i) each type of instrument; (ii) each type of transaction\na) Description of the financial\n"
+        "instrument, type of instrument\nIdentification code\nMOL ordinary shares (ISIN: HU0000153937)\n"
+        "b) Nature of the transaction  sale\nc) Price(s) and volume(s)  Price(s) Volume(s)\n4810 HUF/piece\n9762 pieces\n"
+        "d) Aggregated information\n- Aggregated volume\n- Price\n\n185030 pieces\n4888 HUF/piece\n"
+        "e) Date of the transaction 12.10.2026\n")
+    assert en["investor"] == "Dr. Jan Kowalski" and en["delta"] == -185030 and en["is_shares"]
+    assert en["event_date"] == "2026-10-12" and "price" not in en  # cena w HUF - wartość z kursu na GPW
+    en = espi.parse_mar("a) Name Namsen Limited\nb) Nature of the transaction Acquisition\n"
+                        "d) Aggregated information\n- Aggregated volume\n- Price\n 1,027,948 \n19.93 PLN\n"
+                        "e) Date of the transaction 2026-10-02")
+    assert en["delta"] == 1027948 and en["price"] == 19.93
+    en = espi.parse_mar("Based on Article 19 of Regulation (EU) No 596/2014, Krka announces:\nGašper Kastelic, the person "
+                        "closely associated with the Member of the Management Board, informed the company that on "
+                        "2 March 2026, he acquired 122 shares of the company at a weighted average price of EUR 236.00.")
+    assert en["investor"] == "Gašper Kastelic" and en["delta"] == 122 and en["event_date"] == "2026-03-02"
+    assert collect.stale_quote("16 paź 09:56") and not collect.stale_quote("16:59")
+
     # nowszy układ Biznesradar: <th> bezpośrednio w <thead>, bez <tr>; pierwszy wiersz to już dane
     ret2 = collect.br.parse_returns(
         '<table><thead><th>Profil</th><th>1t</th><th>1m</th><th>3m</th></thead><tbody>'

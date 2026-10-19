@@ -12,6 +12,10 @@ MONTHS_GEN = {  # dopełniacz: "1 września 2026"
     "lipca": 7, "sierpnia": 8, "września": 9, "wrzesnia": 9, "października": 10,
     "pazdziernika": 10, "listopada": 11, "grudnia": 12,
 }
+MONTHS_EN = {  # komunikaty zagranicznych emitentów: "2 March 2026"
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6, "jul": 7, "aug": 8,
+    "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
 
 
 def num(s):
@@ -78,9 +82,16 @@ def any_date(s):
         except ValueError:
             return None
     m = re.search(r"(\d{1,2})\s+([a-ząćęłńóśźż]+)\s+(\d{4})", s.lower())
-    if m and m.group(2) in MONTHS_GEN:
+    if m and (m.group(2) in MONTHS_GEN or m.group(2)[:3] in MONTHS_EN):
         try:
-            return date(int(m.group(3)), MONTHS_GEN[m.group(2)], int(m.group(1))).isoformat()
+            mon = MONTHS_GEN.get(m.group(2)) or MONTHS_EN[m.group(2)[:3]]
+            return date(int(m.group(3)), mon, int(m.group(1))).isoformat()
+        except ValueError:
+            return None
+    m = re.search(r"\b([a-z]{3,9})\s+(\d{1,2}),?\s+(\d{4})", s.lower())  # "September 1, 2026"
+    if m and m.group(1)[:3] in MONTHS_EN:
+        try:
+            return date(int(m.group(3)), MONTHS_EN[m.group(1)[:3]], int(m.group(2))).isoformat()
         except ValueError:
             return None
     return None

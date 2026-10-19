@@ -44,6 +44,11 @@ def trading_date(today=None):
     return d.isoformat()
 
 
+def stale_quote(time_cell):
+    """Kolumna czasu w notowaniach: "16:59" = transakcja z dzisiejszej sesji, "16 paź 09:56" = z wcześniejszej."""
+    return bool(re.match(r"\s*\d{1,2}\s+[^\d\s:]", time_cell or ""))
+
+
 def now():
     return datetime.now().isoformat(timespec="seconds")
 
@@ -64,6 +69,10 @@ def collect_market_tables(con, stats):
                      full_name=excluded.full_name, market=excluded.market, slug=excluded.slug,
                      last_seen=excluded.last_seen""",
                 (r["ticker"], r["short_name"], r["full_name"], label, r["slug"], td))
+            if r["close"] and stale_quote(r.get("time")):
+                # brak handlu dziś: Biznesradar pokazuje ostatnią transakcję z wcześniejszej sesji ("16 paź 09:56")
+                # - zostaje tylko kurs, bez jej wolumenu i obrotu
+                r = {**r, "change_pct": 0.0, "volume": 0.0, "turnover": 0.0}
             if r["close"]:
                 con.execute("INSERT OR REPLACE INTO quotes VALUES(?,?,?,?,?,?)",
                             (r["ticker"], td, r["close"], r["change_pct"], r["volume"], r["turnover"]))
@@ -205,6 +214,20 @@ def collect_gpw_history(con, stats, since):
     stats["gpw_history_new"] = new
 
 
+def reclassify_other(con, stats):
+    """Komunikaty z kategorii "other" sprawdzane ponownie po rozszerzeniu reguł (np. angielskie tytuły)
+    - nowe art69/mar trafią do odczytu treści w fetch_espi_details."""
+    moved = 0
+    for r in con.execute("SELECT id, title FROM espi WHERE category='other'").fetchall():
+        cat = espi.classify(r["title"])
+        if cat != "other":
+            con.execute("UPDATE espi SET category=?, fetched=0 WHERE id=? AND category='other'", (cat, r["id"]))
+            moved += 1
+    con.commit()
+    if moved:
+        stats["espi_reclassified"] = moved
+
+
 def fetch_espi_details(con, stats):
     todo = con.execute(
         f"SELECT * FROM espi WHERE fetched=0 AND category IN ({','.join('?' * len(FETCH_BODY))}) ORDER BY id",
@@ -339,6 +362,7 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
             collect_espi(con, stats, max_pages=max_pages or (500 if since else None), since=since)
             if since:
                 collect_gpw_history(con, stats, since)
+            reclassify_other(con, stats)
             fetch_espi_details(con, stats)
             store_wz_snapshots(con)
         last_weekly = con.execute("SELECT value FROM settings WHERE key='last_weekly'").fetchone()
