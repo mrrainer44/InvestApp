@@ -80,7 +80,7 @@ const BUILTIN = [
   { field: "evebitda", title: "EV/EBITDA", group: "val", hozAlign: "right", formatter: ratio, sorter: numSort },
   { field: "cp", title: "C/P", group: "val", hozAlign: "right", formatter: ratio, sorter: numSort, visible: false },
   { field: "report", title: "Ostatni raport", group: "val", visible: false },
-  { field: "div_has", title: "Dywidenda", group: "div", formatter: yesno, headerFilter: "tickCross", headerFilterParams: { tristate: true }, hozAlign: "center" },
+  { field: "div_has", title: "Dywidenda 12 mies.", headerTooltip: "Tak = dywidenda wypłacona w ostatnich 12 miesiącach albo już zapowiedziana (z ustalonym dniem prawa). Wcześniejsze wypłaty są w panelu spółki.", group: "div", formatter: yesno, headerFilter: "tickCross", headerFilterParams: { tristate: true }, hozAlign: "center" },
   { field: "div_yield", title: "Stopa dyw. 12 mies.", group: "div", hozAlign: "right", formatter: (c) => c.getValue() == null ? "" : fmtNum(c.getValue(), 2) + "%", sorter: numSort },
   { field: "div_dps12", title: "Dyw. na akcję 12 mies.", group: "div", hozAlign: "right", formatter: num2, sorter: numSort, visible: false },
   { field: "div_next_day", title: "Ostatni dzień z prawem", group: "div" },
