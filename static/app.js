@@ -114,13 +114,25 @@ const customDef = (c) => {
 
 /* ---------- tabela spółek ---------- */
 let tblCompanies, market = "", views = {};
+// "Widok: bieżący" to własny układ użytkownika (companies_layout) - zapisywany na bieżąco, ale tylko gdy
+// wybrany jest właśnie on. Zapisany widok tylko się wyświetla; zmiany w nim utrwala przycisk "Zapisz widok".
+let activeView = "", workingLayout = null, defaultLayout = null;
 const layoutKey = "companies_layout";
-const saveLayout = debounce(() => {
-  if (!tblCompanies) return;
-  const layout = tblCompanies.getColumnLayout().map(({ field, width, visible }) => ({ field, width, visible }));
-  const sort = tblCompanies.getSorters().map((s) => ({ column: s.field, dir: s.dir }));
-  api(`/api/settings/${layoutKey}`, { method: "PUT", body: { layout, sort } }).catch(() => {});
-}, 600);
+const currentLayout = () => ({
+  layout: tblCompanies.getColumnLayout().map(({ field, width, visible }) => ({ field, width, visible })),
+  sort: tblCompanies.getSorters().map((s) => ({ column: s.field, dir: s.dir })),
+});
+function storeWorking() {
+  if (!tblCompanies || activeView) return;
+  workingLayout = currentLayout();
+  api(`/api/settings/${layoutKey}`, { method: "PUT", body: workingLayout }).catch(() => {});
+}
+const saveLayout = debounce(storeWorking, 600);
+function setActiveView(name) {
+  activeView = name;
+  $("#viewSel").value = name;
+  api("/api/settings/companies_active_view", { method: "PUT", body: { name } }).catch(() => {});
+}
 
 function applyLayout(saved) {
   if (!saved || !saved.layout) return;
@@ -139,10 +151,13 @@ function applyLayout(saved) {
 }
 
 async function loadCompanies() {
-  const [data, cols, saved, savedViews] = await Promise.all([
-    api("/api/companies"), api("/api/columns"), api(`/api/settings/${layoutKey}`), api("/api/settings/views")]);
+  const [data, cols, saved, savedViews, active] = await Promise.all([
+    api("/api/companies"), api("/api/columns"), api(`/api/settings/${layoutKey}`), api("/api/settings/views"),
+    api("/api/settings/companies_active_view")]);
   customCols = cols;
   views = savedViews || {};
+  workingLayout = saved;
+  activeView = active && views[active.name] ? active.name : "";
   renderViewSelect();
   const flows = data.map((d) => Math.abs(d.flow_30d || 0)).filter(Boolean).sort((a, b) => b - a);
   flowScale = flows[Math.min(5, flows.length - 1)] || 1;
@@ -153,7 +168,8 @@ async function loadCompanies() {
     movableColumns: true, placeholder: "Brak danych. Uruchom pierwsze pobranie w zakładce „Dane i ustawienia”.",
     initialSort: [{ column: "mcap", dir: "desc" }], columnDefaults: { headerTooltip: true, resizable: true },
   });
-  tblCompanies.on("tableBuilt", () => { applyLayout(saved); applyFilters();
+  tblCompanies.on("tableBuilt", () => { defaultLayout = currentLayout();
+    applyLayout(activeView ? views[activeView] : saved); applyFilters();
     ["columnMoved", "columnResized", "columnVisibilityChanged", "dataSorted"].forEach((e) => tblCompanies.on(e, saveLayout)); });
   tblCompanies.on("cellEdited", async (cell) => {
     const key = CUSTOM_OF[cell.getField()];
@@ -176,24 +192,33 @@ function renderViewSelect() {
   sel.innerHTML = `<option value="">Widok: bieżący</option>` +
     Object.keys(views).map((n) => `<option>${esc(n)}</option>`).join("") +
     (Object.keys(views).length ? `<option value="__del">Usuń wybrany widok…</option>` : "");
+  sel.value = activeView;
 }
 
 $("#viewSel").addEventListener("change", async (e) => {
   const v = e.target.value;
   if (v === "__del") {
-    const name = prompt("Nazwa widoku do usunięcia:", Object.keys(views)[0] || "");
-    if (name && views[name]) { delete views[name]; await api("/api/settings/views", { method: "PUT", body: views }); toast("Usunięto widok"); }
+    const name = prompt("Nazwa widoku do usunięcia:", activeView || Object.keys(views)[0] || "");
+    if (name && views[name]) {
+      delete views[name];
+      await api("/api/settings/views", { method: "PUT", body: views });
+      if (name === activeView) { setActiveView(""); applyLayout(workingLayout || defaultLayout); }
+      toast("Usunięto widok");
+    }
     renderViewSelect(); return;
   }
-  if (views[v]) { applyLayout(views[v]); saveLayout(); toast(`Widok „${v}”`); }
+  if (!activeView) storeWorking();  // zmiany z ostatnich chwil, zanim przełączymy na zapisany widok
+  setActiveView(views[v] ? v : "");
+  applyLayout(activeView ? views[activeView] : (workingLayout || defaultLayout));
+  toast(activeView ? `Widok „${activeView}”` : "Widok bieżący");
 });
 $("#btnSaveView").addEventListener("click", async () => {
-  const name = prompt("Nazwa widoku (np. Dywidendowe, Skaner insiderów):");
+  const name = prompt("Nazwa widoku (np. Dywidendowe, Skaner insiderów). Podaj istniejącą nazwę, żeby ją nadpisać:",
+    activeView || "");
   if (!name) return;
-  views[name] = { layout: tblCompanies.getColumnLayout().map(({ field, width, visible }) => ({ field, width, visible })),
-    sort: tblCompanies.getSorters().map((s) => ({ column: s.field, dir: s.dir })) };
+  views[name] = currentLayout();
   await api("/api/settings/views", { method: "PUT", body: views });
-  renderViewSelect(); $("#viewSel").value = name; toast("Zapisano widok");
+  setActiveView(name); renderViewSelect(); toast("Zapisano widok");
 });
 
 $("#q").addEventListener("input", debounce(applyFilters, 150));
