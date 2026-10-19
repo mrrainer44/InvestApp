@@ -252,6 +252,14 @@ def test_pipeline():
     espi.pdf_text = fake_pdf_text
     db.init()
 
+    # nowszy układ Biznesradar: <th> bezpośrednio w <thead>, bez <tr>; pierwszy wiersz to już dane
+    ret2 = collect.br.parse_returns(
+        '<table><thead><th>Profil</th><th>1t</th><th>1m</th><th>3m</th></thead><tbody>'
+        '<tr><td><a href="/stopa-zwrotu/06N" title="MAGNA">06N (06MAGNA)</a></td><td>+0,84%</td><td>-3,23%</td>'
+        '<td>-2,83%</td></tr></tbody></table>')
+    assert ret2 == [{"ticker": "06N", "r1w": 0.84, "r1m": -3.23, "r3m": -2.83, "r6m": None, "ytd": None,
+                     "r12m": None, "r24m": None, "r36m": None}], ret2
+
     st, stats = collect.run(weekly=True)
     assert st == "ok", stats
     assert stats["quotes_GPW"] == 5 and stats["quotes_NC"] == 1

@@ -136,6 +136,14 @@ input[type="search"] { min-width: 220px; }
 .fact:hover, .fact:focus { border-left-color: var(--accent); outline: none; }
 .fact b { display: block; font-family: var(--mono); font-size: 16px; }
 .fact > span { color: var(--muted); font-size: 12px; }
+.fact .lvl { margin-left: 6px; vertical-align: -2px; }
+.lvl-legend .lvl { width: 12px; height: 12px; vertical-align: -2px; }
+.lvl .bg { stroke: none; }
+.lvl .g { fill: none; stroke: #fff; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.lvl-good .bg { fill: var(--gain); }
+.lvl-neutral .bg { fill: var(--muted); }
+.lvl-warn .bg { fill: var(--signal); }
+.lvl-bad .bg { fill: var(--loss); }
 .fact .info { display: inline-grid; place-items: center; width: 14px; height: 14px; border: 1px solid var(--muted);
   border-radius: 50%; font: italic 600 10px/1 Georgia, serif; vertical-align: 1px; margin-left: 2px; }
 .fact .tip { display: none; position: absolute; top: calc(100% + 6px); left: 0; z-index: 6; width: 290px;

@@ -240,32 +240,48 @@ $("#drawerClose").addEventListener("click", () => { $("#drawer").classList.remov
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#drawerClose").click(); });
 
 /* --- wskaźniki z objaśnieniem: co to jest i jak czytać obecny odczyt (progi orientacyjne) --- */
+// każda ocena: [poziom, tekst]; poziomy: good (na korzyść), neutral, warn (ostrożnie), bad (na niekorzyść), none
 const FACT_INFO = {
-  price: ["Kurs", "Ostatnia cena zamknięcia akcji (notowania z ok. 15-minutowym opóźnieniem).",
-    () => "Sam kurs nie jest ani dobry, ani zły - oceniaj go razem z C/Z, C/WK i przepływami."],
+  price: ["Kurs", "Ostatnia cena zamknięcia akcji (notowania z ok. 15-minutowym opóźnieniem). Ikona pokazuje trend z ostatnich 3 miesięcy.",
+    (v, r) => r == null ? ["none", "Brak danych o zmianie kursu z 3 miesięcy."]
+      : r > 5 ? ["good", `Trend wzrostowy - ${fmtNum(r, 1)}% w 3 miesiące.`]
+        : r < -5 ? ["bad", `Trend spadkowy - ${fmtNum(r, 1)}% w 3 miesiące.`]
+          : ["neutral", `Kurs stabilny - ${r > 0 ? "+" : ""}${fmtNum(r, 1)}% w 3 miesiące.`]],
   mcap: ["Kapitalizacja", "Kurs × liczba akcji, czyli wartość całej spółki według giełdy.",
-    (v) => v == null ? "Brak danych." : v >= 10e9 ? "Duża spółka - zwykle stabilniejsza i łatwiej kupić czy sprzedać akcje."
-      : v >= 1e9 ? "Średnia spółka." : "Mała spółka - większy potencjał, ale też większe ryzyko i słabsza płynność."],
+    (v) => v == null ? ["none", "Brak danych."] : v >= 10e9 ? ["good", "Duża spółka - zwykle stabilniejsza i łatwiej kupić czy sprzedać akcje."]
+      : v >= 1e9 ? ["neutral", "Średnia spółka."] : ["warn", "Mała spółka - większy potencjał, ale też większe ryzyko i słabsza płynność."]],
   cz: ["C/Z (cena / zysk)", "Ile złotych płacisz za 1 zł rocznego zysku spółki (ostatnie 4 kwartały), czyli po ilu latach zyski „zwrócą” cenę akcji.",
-    (v) => v == null ? "Brak danych - spółka mogła nie mieć zysku albo wyników." : v < 0 ? "Ujemne - spółka ma stratę (−)."
-      : v < 8 ? "Nisko - tanio względem zysków (+), ale sprawdź, czy zysk nie był jednorazowy."
-        : v <= 20 ? "W typowym przedziale dla GPW (ok. 10-15) - neutralnie." : "Wysoko - drogo względem zysków; ma sens tylko przy szybkim wzroście (−)."],
+    (v) => v == null ? ["none", "Brak danych - spółka mogła nie mieć zysku albo wyników."] : v < 0 ? ["bad", "Ujemne - spółka ma stratę."]
+      : v < 8 ? ["good", "Nisko - tanio względem zysków, ale sprawdź, czy zysk nie był jednorazowy."]
+        : v <= 20 ? ["neutral", "W typowym przedziale dla GPW (ok. 10-15)."] : ["bad", "Wysoko - drogo względem zysków; ma sens tylko przy szybkim wzroście."]],
   cwk: ["C/WK (cena / wartość księgowa)", "Ile płacisz za 1 zł majątku netto spółki (kapitału własnego).",
-    (v) => v == null ? "Brak danych." : v < 0 ? "Ujemny kapitał własny - sygnał ostrzegawczy (−)."
-      : v < 1 ? "Poniżej 1 - giełda wycenia spółkę taniej niż jej majątek (+), choć bywa to też sygnałem kłopotów."
-        : v <= 3 ? "Umiarkowanie - neutralnie." : "Wysoko - normalne w IT i markach, dla banków czy przemysłu to drogo (−)."],
+    (v) => v == null ? ["none", "Brak danych."] : v < 0 ? ["bad", "Ujemny kapitał własny - sygnał ostrzegawczy."]
+      : v < 1 ? ["good", "Poniżej 1 - giełda wycenia spółkę taniej niż jej majątek, choć bywa to też sygnałem kłopotów."]
+        : v <= 3 ? ["neutral", "Umiarkowanie."] : ["warn", "Wysoko - normalne w IT i markach, dla banków czy przemysłu to drogo."]],
   dy: ["Stopa dywidendy", "Dywidendy wypłacone w ostatnich 12 miesiącach w stosunku do obecnego kursu.",
-    (v) => !v ? "Brak dywidendy w ostatnich 12 miesiącach." : v < 3 ? "Niska."
-      : v <= 7 ? "Dobra - regularny dochód gotówkowy (+)." : "Bardzo wysoka - sprawdź, czy nie jednorazowa i czy spółkę na nią stać (ostrożnie)."],
+    (v) => !v ? ["neutral", "Brak dywidendy w ostatnich 12 miesiącach."] : v < 3 ? ["neutral", "Niska."]
+      : v <= 7 ? ["good", "Dobra - regularny dochód gotówkowy."] : ["warn", "Bardzo wysoka - sprawdź, czy nie jednorazowa i czy spółkę na nią stać."]],
   flow: ["Przepływ 30 dni", "Szacowane saldo zakupów minus sprzedaży dużych inwestorów (zawiadomienia art. 69, insiderzy, fundusze) z ostatnich 30 dni.",
-    (v) => !v ? "Brak zarejestrowanych ruchów w ostatnich 30 dniach." : v > 0 ? "Dodatni - duzi gracze dokupowali (+)." : "Ujemny - duzi gracze sprzedawali (−)."],
+    (v) => !v ? ["neutral", "Brak zarejestrowanych ruchów w ostatnich 30 dniach."] : v > 0 ? ["good", "Dodatni - duzi gracze dokupowali."]
+      : ["bad", "Ujemny - duzi gracze sprzedawali."]],
 };
-function fact(key, value, raw) {
+const LEVEL = { good: "Na korzyść", neutral: "Neutralnie", warn: "Ostrożnie", bad: "Na niekorzyść", none: "Brak oceny" };
+// różne kształty, nie tylko kolory: kółko z ✓, kółko z –, trójkąt z !, kółko z ✕
+const LEVEL_ICON = {
+  good: `<circle cx="8" cy="8" r="7" class="bg"/><path d="M4.6 8.2l2.3 2.3 4.5-4.6" class="g"/>`,
+  neutral: `<circle cx="8" cy="8" r="7" class="bg"/><path d="M5 8h6" class="g"/>`,
+  warn: `<path d="M8 1.2l7.1 12.6H.9z" class="bg"/><path d="M8 5.6v4.1M8 11.6v.1" class="g"/>`,
+  bad: `<circle cx="8" cy="8" r="7" class="bg"/><path d="M5.4 5.4l5.2 5.2M10.6 5.4l-5.2 5.2" class="g"/>`,
+};
+const levelIcon = (lvl) => lvl === "none" ? "" :
+  `<svg class="lvl lvl-${lvl}" viewBox="0 0 16 16" width="15" height="15" role="img" aria-label="Ocena: ${LEVEL[lvl]}"><title>${LEVEL[lvl]}</title>${LEVEL_ICON[lvl]}</svg>`;
+function fact(key, value, ...raw) {
   const [label, what, read] = FACT_INFO[key];
-  return `<div class="fact" tabindex="0" aria-describedby="tip-${key}"><b>${value}</b>
+  const [lvl, text] = read(...raw);
+  return `<div class="fact" tabindex="0" aria-describedby="tip-${key}"><b>${value}${levelIcon(lvl)}</b>
     <span>${esc(label)} <i class="info" aria-hidden="true">i</i></span>
     <div class="tip" id="tip-${key}" role="tooltip"><strong>${esc(label)}</strong> ${esc(what)}
-      <em>Ten odczyt:</em> ${esc(read(raw))}</div></div>`;
+      <em>Ten odczyt: ${esc(LEVEL[lvl].toLowerCase())}</em> ${esc(text)}</div></div>`;
 }
 
 /* --- przepływ kapitału dzień po dniu: słupki = saldo dnia, linia = saldo narastające w okresie --- */
@@ -441,14 +457,15 @@ async function openCompany(t) {
     <div class="dim">${esc(c.market === "NC" ? "NewConnect" : "GPW")}${c.sector ? " · " + esc(c.sector) : ""}${c.isin ? " · " + esc(c.isin) : ""}
       ${c.slug ? `· <a href="https://www.biznesradar.pl/notowania/${encodeURIComponent(c.slug)}" target="_blank" rel="noopener">profil w Biznesradar</a>` : "· wycofana z obrotu (brak w Biznesradar)"}</div>
     <div class="facts">
-      ${fact("price", fmtNum(row.price), row.price)}
+      ${fact("price", fmtNum(row.price), row.price, row.r3m)}
       ${fact("mcap", fmtMoney(row.mcap), row.mcap)}
       ${fact("cz", row.cz == null ? "–" : fmtNum(row.cz, 1), row.cz)}
       ${fact("cwk", row.cwk == null ? "–" : fmtNum(row.cwk, 1), row.cwk)}
       ${fact("dy", row.div_yield == null ? "–" : fmtNum(row.div_yield, 2) + "%", row.div_yield)}
       ${fact("flow", row.flow_30d == null ? "–" : (row.flow_30d > 0 ? "+" : "") + fmtMoney(row.flow_30d), row.flow_30d)}
     </div>
-    <p class="dim chart-note">Najedź na wskaźnik (albo zaznacz go klawiszem Tab), żeby zobaczyć objaśnienie. Progi są orientacyjne, to nie rekomendacja.</p>
+    <p class="dim chart-note lvl-legend">${["good", "neutral", "warn", "bad"].map((l) => `${levelIcon(l)} ${LEVEL[l].toLowerCase()}`).join(" · ")}
+      - najedź na wskaźnik, żeby zobaczyć objaśnienie. Progi są orientacyjne, to nie rekomendacja.</p>
     <section id="companyChart" aria-label="Wykres"><div class="chart-ctl"></div><div class="chart-body"></div></section>
     <h3>Akcjonariat (ostatni odczyt)</h3>
     ${holderGroups(d.holder_groups || [])}

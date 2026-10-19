@@ -45,9 +45,11 @@ def parse_profile_table(html):
     t = _main_table(soup)
     if t is None:
         return [], []
-    headers = [th.get_text(" ", strip=True) for th in t.find("tr").find_all("th")]
+    # nagłówki bywają w <tr> albo bezpośrednio w <thead> (bez <tr>) - bierzemy pierwszy wiersz z <th>
+    head = next((tr for tr in t.find_all("tr") if tr.find("th")), None) or t.find("thead") or t
+    headers = [th.get_text(" ", strip=True) for th in head.find_all("th")]
     out = []
-    for tr in t.find_all("tr")[1:]:
+    for tr in t.find_all("tr"):
         tds = tr.find_all("td")
         if not tds:
             continue
