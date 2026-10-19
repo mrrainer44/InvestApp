@@ -14,7 +14,7 @@ import traceback
 from datetime import date, datetime, timedelta
 
 from . import biznesradar as br
-from . import db, espi, flows, gpwpl, http, ofe, pressure
+from . import bankier, db, espi, flows, gpwpl, http, ofe, pressure
 from .config import (ESPI_FIRST_RUN_PAGES, ESPI_MAX_PAGES, LOG_DIR, MARKETS, MAX_PDF_BYTES,
                      PDF_CACHE, RATIOS)
 from .util import norm_company, norm_investor
@@ -228,6 +228,90 @@ def reclassify_other(con, stats):
         stats["espi_reclassified"] = moved
 
 
+def _pdf_texts(espi_id, hrefs, tag=""):
+    """Tekst załączników PDF (z pamięci podręcznej albo pobrany). Zwraca (tekst, liczba plików nie-PDF)."""
+    text, not_pdf = "", 0
+    for i, href in enumerate(hrefs[:6]):
+        cache = PDF_CACHE / f"{espi_id}_{tag}{i}.txt"
+        if cache.exists() and cache.stat().st_size:
+            text += "\n\n=== PDF ===\n" + cache.read_text(encoding="utf-8")
+            continue
+        data = http.get(href, binary=True)
+        if not data or len(data) > MAX_PDF_BYTES:
+            continue
+        if data[:4] != b"%PDF":
+            not_pdf += 1
+            log.warning("Załącznik nie jest plikiem PDF (%s B, zaczyna się od %r) - pomijam: %s",
+                        len(data), data[:15], href)
+            continue
+        t = espi.pdf_text(data)
+        if t.strip():
+            cache.write_text(t, encoding="utf-8")
+            text += "\n\n=== PDF ===\n" + t
+    return text, not_pdf
+
+
+def _has_forms(parsed):
+    return any(f.get("delta") for f in json.loads(parsed or "{}").get("forms", []))
+
+
+def fetch_bankier_attachments(con, stats, max_pages=20):
+    """Raporty art. 69 / MAR z archiwów gpw.pl i newconnect.pl, z których nie odczytaliśmy liczb, a mają
+    załączniki - te same pliki pobieramy z Bankier.pl (komunikat dopasowany po chwili publikacji i tytule).
+    Każdy raport sprawdzamy raz (parsed.bankier = adres komunikatu albo "brak")."""
+    rows = con.execute(
+        "SELECT e.id, e.ticker, e.ts, e.title, e.category, e.body, e.parsed, c.short_name, c.market FROM espi e "
+        "JOIN companies c ON c.ticker=e.ticker WHERE e.category IN ('art69','mar') AND e.fetched=1 "
+        "AND (e.url LIKE 'https://www.gpw.pl/%' OR e.url LIKE 'https://newconnect.pl/%') ORDER BY e.ticker, e.ts DESC"
+    ).fetchall()
+    todo = {}
+    for r in rows:
+        p = json.loads(r["parsed"] or "{}")
+        if "bankier" in p or _has_forms(r["parsed"]) or not r["short_name"]:
+            continue
+        if re.search(r"Spis zalacznikow|Znaleziono \d+ za", r["body"] or ""):
+            todo.setdefault(r["ticker"], []).append(r)
+    n_rep = sum(len(v) for v in todo.values())
+    if not n_rep:
+        return
+    log.info("[2/4] Załączniki z Bankier.pl: %s raportów z gpw.pl/newconnect.pl (%s spółek)", n_rep, len(todo))
+    found = parsed_ok = done = 0
+    for ticker, items in todo.items():
+        oldest = min(r["ts"] for r in items)[:10]
+        cands = []
+        for page in range(1, max_pages + 1):
+            lst = bankier.fetch_list(items[0]["short_name"], items[0]["market"], page)
+            if not lst:
+                break
+            cands += lst
+            if lst[-1]["ts"][:10] < oldest:
+                break
+        for r in items:
+            done += 1
+            if done % 25 == 0:
+                log.info("      załączniki: %s/%s (dopasowane %s, z liczbami %s)", done, n_rep, found, parsed_ok)
+            p = json.loads(r["parsed"] or "{}")
+            m = bankier.match(r["ts"], r["title"], cands)
+            pdf = ""
+            if m:
+                found += 1
+                pdf, _ = _pdf_texts(r["id"], bankier.fetch_attachments(m["url"]), tag="bk")
+            if pdf:
+                text = (r["body"] or "") + pdf
+                p = parse_espi_text(r["category"], text, r["title"], [])
+                parsed_ok += _has_forms(json.dumps(p))
+                p["bankier"] = m["url"]
+                con.execute("UPDATE espi SET body=?, parsed=? WHERE id=?",
+                            (text[:60000], json.dumps(p, ensure_ascii=False), r["id"]))
+            else:
+                p["bankier"] = m["url"] if m else "brak"
+                con.execute("UPDATE espi SET parsed=? WHERE id=?", (json.dumps(p, ensure_ascii=False), r["id"]))
+            con.commit()
+    stats["bankier_reports"] = n_rep
+    stats["bankier_matched"] = found
+    stats["bankier_parsed"] = parsed_ok
+
+
 def fetch_espi_details(con, stats):
     todo = con.execute(
         f"SELECT * FROM espi WHERE fetched=0 AND category IN ({','.join('?' * len(FETCH_BODY))}) ORDER BY id",
@@ -244,25 +328,11 @@ def fetch_espi_details(con, stats):
             continue
         text = art["text"]
         # gpw.pl i newconnect.pl odrzucają automatyczne pobieranie załączników (zabezpieczenie serwera),
-        # więc z tych źródeł czytamy tylko treść raportu
+        # więc z tych źródeł czytamy tylko treść raportu - załączniki uzupełnia potem fetch_bankier_attachments
         if row["category"] in FETCH_PDF and not own:
-            for i, href in enumerate(art["pdfs"][:6]):
-                cache = PDF_CACHE / f"{row['id']}_{i}.txt"
-                if cache.exists() and cache.stat().st_size:
-                    text += "\n\n=== PDF ===\n" + cache.read_text(encoding="utf-8")
-                    continue
-                data = http.get(href, binary=True)
-                if not data or len(data) > MAX_PDF_BYTES:
-                    continue
-                if data[:4] != b"%PDF":
-                    not_pdf += 1
-                    log.warning("Załącznik nie jest plikiem PDF (%s B, zaczyna się od %r) - pomijam: %s",
-                                len(data), data[:15], href)
-                    continue
-                t = espi.pdf_text(data)
-                if t.strip():
-                    cache.write_text(t, encoding="utf-8")
-                    text += "\n\n=== PDF ===\n" + t
+            pdf, bad = _pdf_texts(row["id"], art["pdfs"])
+            text += pdf
+            not_pdf += bad
         parsed = parse_espi_text(row["category"], text, row["title"], art.get("pdfs", []))
         if parsed:
             parsed_ok += 1
@@ -341,12 +411,13 @@ def store_wz_snapshots(con):
     con.commit()
 
 
-def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, ofe_only=False, ohlc_days=None):
+def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, ofe_only=False, ohlc_days=None,
+        bankier_only=False):
     setup_logging()
     db.init()
     stats = {}
     con = db.connect()
-    kind = ("sesje" if ohlc_days else "ofe" if ofe_only else "backfill" if since
+    kind = ("sesje" if ohlc_days else "bankier" if bankier_only else "ofe" if ofe_only else "backfill" if since
             else ("weekly" if weekly else "daily"))
     run_id = con.execute("INSERT INTO runs(started, kind, status) VALUES(?,?,?)", (now(), kind, "running")).lastrowid
     con.commit()
@@ -354,6 +425,11 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
     try:
         if ohlc_days:  # tylko historia notowań sesyjnych GPW (do wskaźników presji kupujących)
             pressure.backfill(con, ohlc_days, stats)
+            return status, stats
+        if bankier_only:  # tylko załączniki raportów z archiwum gpw.pl (jednorazowe uzupełnienie historii)
+            fetch_bankier_attachments(con, stats)
+            stats.update(flows.rebuild_changes(con))
+            stats.update(flows.fill_prices(con))
             return status, stats
         if not since and not ofe_only:
             collect_market_tables(con, stats)
@@ -364,6 +440,7 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
                 collect_gpw_history(con, stats, since)
             reclassify_other(con, stats)
             fetch_espi_details(con, stats)
+            fetch_bankier_attachments(con, stats)
             store_wz_snapshots(con)
         last_weekly = con.execute("SELECT value FROM settings WHERE key='last_weekly'").fetchone()
         due = not last_weekly or (date.today() - date.fromisoformat(last_weekly[0])).days >= 6
@@ -400,7 +477,9 @@ if __name__ == "__main__":
                     help="tylko struktury portfeli OFE (od 31.12.2024) i przeliczenie zmian")
     ap.add_argument("--ohlc-history", type=int, metavar="DNI",
                     help="tylko historia notowań sesyjnych GPW z archiwum gpw.pl za ostatnie DNI dni (np. 400)")
+    ap.add_argument("--bankier", action="store_true",
+                    help="tylko załączniki PDF raportów z archiwum gpw.pl/newconnect.pl - pobrane z Bankier.pl")
     a = ap.parse_args()
     st, _ = run(weekly=a.weekly, limit=a.limit, skip_espi=a.skip_espi, since=a.since, max_pages=a.max_pages,
-                ofe_only=a.ofe, ohlc_days=a.ohlc_history)
+                ofe_only=a.ofe, ohlc_days=a.ohlc_history, bankier_only=a.bankier)
     sys.exit(0 if st == "ok" else 1)

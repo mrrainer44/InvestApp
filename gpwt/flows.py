@@ -167,9 +167,13 @@ def split_factor(con, ticker, d1, d2):
     return k
 
 
+# kursy zamknięcia: historia z Biznesradar (tylko pierwsza strona - robots.txt) i sesje z archiwum gpw.pl (ohlc)
+_PRICES = "(SELECT ticker, date, close FROM price_history UNION ALL SELECT ticker, date, close FROM ohlc)"
+
+
 def near_price(con, ticker, d, days=120):
     """Kurs zamknięcia najbliższy dacie d (w obie strony, do `days` dni) - do zgrubnej kontroli ceny."""
-    r = con.execute("SELECT close FROM price_history WHERE ticker=? AND date BETWEEN ? AND ? "
+    r = con.execute(f"SELECT close FROM {_PRICES} WHERE ticker=? AND date BETWEEN ? AND ? "
                     "ORDER BY ABS(julianday(date) - julianday(?)) LIMIT 1",
                     (ticker, (date.fromisoformat(d) - timedelta(days=days)).isoformat(),
                      (date.fromisoformat(d) + timedelta(days=days)).isoformat(), d)).fetchone()
@@ -177,7 +181,7 @@ def near_price(con, ticker, d, days=120):
 
 
 def price_on(con, ticker, d):
-    r = con.execute("SELECT close FROM price_history WHERE ticker=? AND date<=? AND date>=? ORDER BY date DESC LIMIT 1",
+    r = con.execute(f"SELECT close FROM {_PRICES} WHERE ticker=? AND date<=? AND date>=? ORDER BY date DESC LIMIT 1",
                     (ticker, d, (date.fromisoformat(d) - timedelta(days=10)).isoformat())).fetchone()
     return r["close"] if r else None
 

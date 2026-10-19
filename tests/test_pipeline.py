@@ -306,6 +306,25 @@ def test_pipeline():
     assert en["investor"] == "Gašper Kastelic" and en["delta"] == 122 and en["event_date"] == "2026-03-02"
     assert collect.stale_quote("16 paź 09:56") and not collect.stale_quote("16:59")
 
+    # Bankier.pl: lista komunikatów spółki (bez artykułów redakcji i bocznych list innych spółek) i dopasowanie
+    from gpwt import bankier
+    li = ('<li><span>{d}</span><a href="/wiadomosc/{p}-{s}-{i}.html">{t}</a><span>{k}</span></li>')
+    html = "<ul>" + "".join(li.format(**x) for x in [
+        dict(d="14.10.2026 18:00", p="MOL", s="Director-PDMR-transaction", i=1, t="Director/PDMR transaction", k="espi"),
+        dict(d="14.10.2026 18:00", p="MOL", s="Number-of-voting-rights", i=2, t="Number of voting rights", k="espi"),
+        dict(d="19.08.2026 16:01", p="MOL", s="Director-PDMR-transaction", i=3, t="Director/PDMR transaction", k="espi"),
+        dict(d="19.08.2026 16:05", p="MOL", s="Bond-interest-payment", i=4, t="Bond interest payment", k="ebi"),
+        dict(d="15.10.2026 10:00", p="MOL", s="Grupa-MOL-uruchomila", i=5, t="Grupa MOL uruchomiła", k="Firmy"),
+        dict(d="15.10.2026 11:00", p="PKOBP", s="Raport", i=6, t="Raport", k="espi"),
+    ]) + "</ul>"
+    lst = bankier.parse_list(html)
+    assert [x["url"][-6:] for x in lst] == ["1.html", "2.html", "3.html", "4.html"] and lst[0]["ts"] == "2026-10-14 18:00"
+    assert bankier.match("2026-08-19 16:02", "MOL RT. (72/2026) Director/PDMR transaction", lst)["url"].endswith("-3.html")
+    assert bankier.match("2026-10-14 17:59", "MOL RT. (95/2026) Director/PDMR transaction", lst)["url"].endswith("-1.html")
+    assert bankier.match("2026-09-01 12:00", "Director/PDMR transaction", lst) is None
+    assert bankier.attachments('<a href="https://bonnier.pl/static/att/emitent/2026-08/x_eng.pdf">plik</a>') == \
+        ["https://bonnier.pl/static/att/emitent/2026-08/x_eng.pdf"]
+
     # nowszy układ Biznesradar: <th> bezpośrednio w <thead>, bez <tr>; pierwszy wiersz to już dane
     ret2 = collect.br.parse_returns(
         '<table><thead><th>Profil</th><th>1t</th><th>1m</th><th>3m</th></thead><tbody>'

@@ -255,5 +255,9 @@ def fetch_article(url):
 
 
 def fetch_price_history(slug, page=1):
-    html = http.get(f"/notowania-historyczne/{slug}" + (f",{page}" if page > 1 else ""))
+    # robots.txt Biznesradar: "Disallow: /notowania-historyczne/*,*" - kolejnych stron nie pobieramy,
+    # starsze kursy są w tabeli ohlc (archiwum sesji gpw.pl), zob. flows.price_on
+    if page > 1:
+        return []
+    html = http.get(f"/notowania-historyczne/{slug}")
     return parse_price_history(html) if html else []
