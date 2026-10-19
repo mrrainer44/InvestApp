@@ -101,7 +101,8 @@ HIST = ('<table class="qTableFull"><tbody><tr><th>Data</th><th>Otwarcie</th><th>
         '<th>Wolumen</th><th>Obrót</th></tr>'
         '<tr><td>15.10.2026</td><td>3</td><td>3</td><td>3</td><td>3.10</td><td>1</td><td>1</td></tr>'
         '<tr><td>12.10.2026</td><td>3</td><td>3</td><td>3</td><td>3.05</td><td>1</td><td>1</td></tr>'
-        '<tr><td>06.10.2026</td><td>1</td><td>1</td><td>1</td><td>1.15</td><td>1</td><td>1</td></tr></tbody></table>')
+        '<tr><td>06.10.2026</td><td>1</td><td>1</td><td>1</td><td>1.15</td><td>1</td><td>1</td></tr>'
+        '<tr><td>05.10.2026</td><td>3</td><td>3</td><td>3</td><td>2.95</td><td>1</td><td>1</td></tr></tbody></table>')
 
 STATE = {"akc_round": 1}
 
@@ -321,6 +322,24 @@ def test_pipeline():
     ch = {r["price"]: r["excluded"] for r in mem.execute("SELECT price, excluded FROM changes")}
     assert ch == {28.0: 1, 28.4: 0}, ch
 
+    # art. 69: data zdarzenia (transakcji), nie rozliczenia T+2 (CRJ: zdarzenie 16.10, rozliczenie 20.10)
+    a69 = espi.parse_art69("Podmiot, którego dotyczy zdarzenie\nQUERCUS Parasolowy SFIO\nData przekazania zawiadomienia\n"
+                           "2026-10-19\nData zdarzenia\n2026-10-16\nData rozliczenia transakcji\n2026-10-20\n"
+                           "Data powzięcia informacji o zdarzeniu\n2026-10-16\n")
+    assert a69["event_date"] == "2026-10-16", a69
+    # po poprawce parsera stary odczyt znika (bez duplikatu), a wiersz poprawiony ręcznie zostaje
+    mem.execute("INSERT INTO espi(id, ticker, title, ts, category, parsed, fetched) VALUES(9,'CRJ','CRJ (1/2026) Zawiadomienie',"
+                "'2026-10-19 11:58','art69',?,1)", (json.dumps({"forms": [{"investor": "QUERCUS", "delta": 1945,
+                                                                           "event_date": "2026-10-20"}]}),))
+    flows.rebuild_changes(mem)
+    mem.execute("UPDATE espi SET parsed=? WHERE id=9", (json.dumps({"forms": [{"investor": "QUERCUS", "delta": 1945,
+                                                                           "event_date": "2026-10-16"}]}),))
+    flows.rebuild_changes(mem)
+    assert [r[0] for r in mem.execute("SELECT date FROM changes WHERE espi_id=90")] == ["2026-10-16"]
+    mem.execute("UPDATE changes SET date='2026-10-15', verified=1 WHERE espi_id=90")
+    flows.rebuild_changes(mem)
+    assert [r[0] for r in mem.execute("SELECT date FROM changes WHERE espi_id=90")] == ["2026-10-15"]
+
     # Bankier.pl: lista komunikatów spółki (bez artykułów redakcji i bocznych list innych spółek) i dopasowanie
     from gpwt import bankier
     li = ('<li><span>{d}</span><a href="/wiadomosc/{p}-{s}-{i}.html">{t}</a><span>{k}</span></li>')
@@ -361,8 +380,8 @@ def test_pipeline():
 
     ch = {r["source"] + ":" + r["ticker"]: dict(r) for r in con.execute("SELECT * FROM changes")}
     out = ch["art69:OUT"]
-    assert out["delta"] == -140000 and out["date"] == "2026-10-12"
-    assert abs(out["price"] - 3.05) < 1e-9 and abs(out["value"] - (-140000 * 3.05)) < 1e-6
+    assert out["delta"] == -140000 and out["date"] == "2026-10-05"  # data zdarzenia, nie rozliczenia
+    assert abs(out["price"] - 2.95) < 1e-9 and abs(out["value"] - (-140000 * 2.95)) < 1e-6
     mar = ch["mar:CPD"]
     assert mar["delta"] == 30000 and mar["price"] == 0.1 and abs(mar["value"] - 3000) < 1e-9
     assert ch["art69:TBT"]["delta"] == 500000

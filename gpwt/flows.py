@@ -66,6 +66,13 @@ def rebuild_changes(con):
             base = dict(date=d, ticker=row["ticker"], investor=f["investor"],
                         investor_norm=norm_investor(f["investor"]), delta=f["delta"],
                         source=row["category"], espi_id=row["id"] * 10 + i)
+            # wiersz poprawiony ręcznie (sprawdzony) zostaje taki, jak go ustawiono
+            if con.execute("SELECT 1 FROM changes WHERE source=? AND espi_id=? AND verified=1",
+                           (base["source"], base["espi_id"])).fetchone():
+                continue
+            # po poprawce parsera (inna data / inwestor) stary odczyt tego formularza znika zamiast zostać duplikatem
+            con.execute("DELETE FROM changes WHERE source=? AND espi_id=? AND verified=0 AND (date<>? OR investor_norm<>?)",
+                        (base["source"], base["espi_id"], base["date"], base["investor_norm"]))
             if row["category"] == "art69":
                 _ins(con, **base, shares_before=f.get("shares_before"), shares_after=f.get("shares_after"),
                      note=f.get("kind"))

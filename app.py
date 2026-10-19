@@ -316,6 +316,9 @@ def patch_change(cid):
     row["value"] = row["delta"] * row["price"] if row["delta"] is not None and row["price"] else None
     if "price" in sets:
         row["price_src"] = "ręcznie"
+    # ręczna poprawka liczb, daty albo inwestora = wiersz sprawdzony; przeliczenie zmian go nie nadpisze
+    if "verified" not in sets and sets.keys() & {"investor", "shares_before", "shares_after", "delta", "price", "date"}:
+        row["verified"] = 1
     c.execute("""UPDATE changes SET date=?, investor=?, investor_norm=?, shares_before=?, shares_after=?, delta=?,
                  price=?, price_src=?, value=?, verified=?, excluded=?, note=? WHERE id=?""",
               (row["date"], row["investor"], row["investor_norm"], row["shares_before"], row["shares_after"],

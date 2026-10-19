@@ -214,6 +214,22 @@ def collect_gpw_history(con, stats, since):
     stats["gpw_history_new"] = new
 
 
+def reparse_espi(con, stats):
+    """Ponowny odczyt zapisanej treści raportów art. 69 / MAR po poprawce parsera - bez pobierania z sieci."""
+    n = 0
+    for r in con.execute("SELECT id, category, title, body, parsed FROM espi WHERE fetched=1 "
+                         "AND category IN ('art69','mar') AND body IS NOT NULL").fetchall():
+        old = json.loads(r["parsed"] or "{}")
+        new = parse_espi_text(r["category"], r["body"], r["title"], [])
+        if "bankier" in old:
+            new["bankier"] = old["bankier"]
+        if new != old:
+            con.execute("UPDATE espi SET parsed=? WHERE id=?", (json.dumps(new, ensure_ascii=False), r["id"]))
+            n += 1
+    con.commit()
+    stats["espi_reparsed"] = n
+
+
 def reclassify_other(con, stats):
     """Komunikaty z kategorii "other" sprawdzane ponownie po rozszerzeniu reguł (np. angielskie tytuły)
     - nowe art69/mar trafią do odczytu treści w fetch_espi_details."""
@@ -412,12 +428,12 @@ def store_wz_snapshots(con):
 
 
 def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, ofe_only=False, ohlc_days=None,
-        bankier_only=False):
+        bankier_only=False, reparse=False):
     setup_logging()
     db.init()
     stats = {}
     con = db.connect()
-    kind = ("sesje" if ohlc_days else "bankier" if bankier_only else "ofe" if ofe_only else "backfill" if since
+    kind = ("sesje" if ohlc_days else "reparse" if reparse else "bankier" if bankier_only else "ofe" if ofe_only else "backfill" if since
             else ("weekly" if weekly else "daily"))
     run_id = con.execute("INSERT INTO runs(started, kind, status) VALUES(?,?,?)", (now(), kind, "running")).lastrowid
     con.commit()
@@ -425,6 +441,11 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
     try:
         if ohlc_days:  # tylko historia notowań sesyjnych GPW (do wskaźników presji kupujących)
             pressure.backfill(con, ohlc_days, stats)
+            return status, stats
+        if reparse:  # tylko ponowny odczyt zapisanych raportów (po poprawce parsera) i przeliczenie zmian
+            reparse_espi(con, stats)
+            stats.update(flows.rebuild_changes(con))
+            stats.update(flows.fill_prices(con))
             return status, stats
         if bankier_only:  # tylko załączniki raportów z archiwum gpw.pl (jednorazowe uzupełnienie historii)
             fetch_bankier_attachments(con, stats)
@@ -479,7 +500,10 @@ if __name__ == "__main__":
                     help="tylko historia notowań sesyjnych GPW z archiwum gpw.pl za ostatnie DNI dni (np. 400)")
     ap.add_argument("--bankier", action="store_true",
                     help="tylko załączniki PDF raportów z archiwum gpw.pl/newconnect.pl - pobrane z Bankier.pl")
+    ap.add_argument("--reparse", action="store_true",
+                    help="ponownie odczytaj zapisane raporty art. 69 / MAR (po poprawce parsera) i przelicz zmiany")
     a = ap.parse_args()
     st, _ = run(weekly=a.weekly, limit=a.limit, skip_espi=a.skip_espi, since=a.since, max_pages=a.max_pages,
-                ofe_only=a.ofe, ohlc_days=a.ohlc_history, bankier_only=a.bankier)
+                ofe_only=a.ofe, ohlc_days=a.ohlc_history, bankier_only=a.bankier,
+                reparse=a.reparse)
     sys.exit(0 if st == "ok" else 1)

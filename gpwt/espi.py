@@ -164,7 +164,8 @@ def parse_art69(text, title=""):
             res["pct_after"] = num(pa.group(1))
 
     # --- data i rodzaj zdarzenia ---
-    for lab in ("Data rozliczenia transakcji", "Data zdarzenia"):
+    # data transakcji, nie jej rozliczenia (T+2, bywa późniejsza niż publikacja raportu)
+    for lab in ("Data zdarzenia", "Data powzięcia informacji o zdarzeniu", "Data rozliczenia transakcji"):
         v = _line_after(lab, t)
         d = _loose_iso(v)
         if d:
