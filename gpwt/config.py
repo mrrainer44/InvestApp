@@ -28,8 +28,11 @@ MAX_PDF_BYTES = 3_000_000
 # Wskaźniki wyceny pobierane z list Biznesradar (kod w URL -> nazwa kolumny)
 RATIOS = {"CZCurrent": "cz", "CWKCurrent": "cwk", "EVEBITDACurrent": "evebitda", "CPCurrent": "cp"}
 
-SERVER_HOST = "127.0.0.1"
-SERVER_PORT = 8050
+SERVER_HOST = os.environ.get("GPWT_HOST", "127.0.0.1")
+SERVER_PORT = int(os.environ.get("GPWT_PORT", "8050"))
+# Logowanie (HTTP Basic) - włączone, gdy ustawione jest hasło. Wymagane przy wystawieniu poza ten komputer.
+AUTH_USER = os.environ.get("GPWT_USER", "gpw")
+AUTH_PASSWORD = os.environ.get("GPWT_PASSWORD", "")
 
 for d in (DATA_DIR, LOG_DIR, PDF_CACHE):
     d.mkdir(parents=True, exist_ok=True)

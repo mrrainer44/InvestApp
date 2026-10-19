@@ -354,6 +354,19 @@ def test_pipeline():
     assert cl.get("/api/status").get_json()["counts"]["companies"] == 7
     assert any(r["ticker"] == "SHO" for r in rows)  # wycofana spółka widoczna w widoku Spółki
     assert cl.post("/api/aliases", json={"alias_norm": out["investor_norm"], "canonical": "Hegen Invest"}).status_code == 200
+    # logowanie: bez hasła w konfiguracji dostęp lokalny jak dotąd, z hasłem każde zapytanie wymaga logowania
+    import base64
+    config.AUTH_PASSWORD = "tajne"
+    try:
+        assert cl.get("/").status_code == 401
+        assert cl.post("/api/collect", json={}).status_code == 401
+        bad = base64.b64encode(b"gpw:zle").decode()
+        assert cl.get("/api/status", headers={"Authorization": f"Basic {bad}"}).status_code == 401
+        good = base64.b64encode(b"gpw:tajne").decode()
+        assert cl.get("/api/status", headers={"Authorization": f"Basic {good}"}).status_code == 200
+    finally:
+        config.AUTH_PASSWORD = ""
+    assert cl.get("/api/status").status_code == 200
     print("OK – potok i API działają")
 
 

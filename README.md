@@ -23,6 +23,40 @@ Kliknięcie tickera otwiera panel spółki: wykres kursu, akcjonariat, zmiany, d
 Godzinę pobierania zmienisz poleceniem (PowerShell w folderze aplikacji):
 `powershell -ExecutionPolicy Bypass -File schedule.ps1 -Time "07:30"`
 
+## Linux / serwer
+
+**Lokalnie (jak na Windows):** potrzebny Python 3.10+ (Debian/Ubuntu: `sudo apt install python3 python3-venv`).
+
+```
+./install.sh            # środowisko .venv i biblioteki
+./pierwsze_pobranie.sh  # pierwsze pełne pobranie (~40 min)
+./start.sh              # http://127.0.0.1:8050
+```
+Codzienne pobieranie przez cron (`crontab -e`): `30 18 * * * cd /ścieżka/do/aplikacji && ./run_daily.sh >/dev/null 2>&1`.
+
+**Na serwerze dostępnym z internetu** aplikacja musi mieć hasło, bo pozwala edytować dane i uruchamiać pobieranie. Bez `GPWT_PASSWORD` serwer w tym trybie w ogóle nie wystartuje. Hasło idzie otwartym tekstem (HTTP Basic), więc przed aplikacją musi stać HTTPS.
+
+```
+sudo useradd --system --home /opt/gpw-tracker gpwtracker
+sudo git clone https://github.com/mrrainer44/InvestApp.git /opt/gpw-tracker
+sudo chown -R gpwtracker: /opt/gpw-tracker
+sudo -u gpwtracker /opt/gpw-tracker/install.sh
+sudo install -m 600 /opt/gpw-tracker/deploy/gpw-tracker.env.example /etc/gpw-tracker.env   # ustaw hasło!
+sudo cp /opt/gpw-tracker/deploy/gpw-tracker*.service /opt/gpw-tracker/deploy/gpw-tracker-collect.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now gpw-tracker.service gpw-tracker-collect.timer
+sudo -u gpwtracker /opt/gpw-tracker/pierwsze_pobranie.sh
+```
+Aplikacja (gunicorn) słucha na `127.0.0.1:8050`. Na świat wystawia ją reverse proxy z certyfikatem, np. Caddy (`/etc/caddy/Caddyfile`):
+```
+twoja-domena.pl {
+    reverse_proxy 127.0.0.1:8050
+}
+```
+Zmienne w `/etc/gpw-tracker.env`: `GPWT_USER`, `GPWT_PASSWORD`, `GPWT_BIND`, `TZ=Europe/Warsaw` (daty sesji liczone są wg czasu polskiego). Logi: `journalctl -u gpw-tracker` i `logs/collect.log`.
+
+**Uwaga o danych:** notowania, wskaźniki, akcjonariat i komunikaty pochodzą z Biznesradar.pl i serwisów GPW, a ich regulaminy dopuszczają użytek prywatny. Serwer z hasłem dla kilku osób to nadal użytek prywatny. Udostępnienie danych publicznie, bez logowania, byłoby dalszą publikacją cudzych treści.
+
 ## Skąd są dane
 
 Wszystko pochodzi z publicznych stron serwisu Biznesradar.pl (notowania opóźnione o 15 min, wskaźniki, dywidendy, akcjonariat, komunikaty ESPI/EBI razem z załącznikami PDF). Aplikacja pobiera strony powoli (ok. 1,5–2 s przerwy między zapytaniami) i tylko to, czego potrzebuje:

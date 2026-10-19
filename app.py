@@ -1,19 +1,32 @@
-"""Serwer aplikacji: http://127.0.0.1:8050  (uruchom: python app.py)"""
+"""Serwer aplikacji: http://127.0.0.1:8050  (uruchom: python app.py; na serwerze: gunicorn wsgi:app)"""
+import hmac
 import json
 import re
 import threading
 import webbrowser
 from datetime import date, datetime, timedelta
 
-from flask import Flask, abort, jsonify, request, send_from_directory
+from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
-from gpwt import collect, db, flows
+from gpwt import collect, config, db, flows
 from gpwt.config import ROOT, SERVER_HOST, SERVER_PORT
 from gpwt.util import ascii_fold, norm_investor
 
 app = Flask(__name__, static_folder=str(ROOT / "static"), static_url_path="/static")
 db.init()
 _job = {"running": False, "last": None}
+_job_lock = threading.Lock()
+
+
+@app.before_request
+def require_login():
+    if not config.AUTH_PASSWORD:
+        return None
+    a = request.authorization
+    if a and hmac.compare_digest((a.username or "").encode(), config.AUTH_USER.encode()) \
+            and hmac.compare_digest((a.password or "").encode(), config.AUTH_PASSWORD.encode()):
+        return None
+    return Response("Wymagane logowanie", 401, {"WWW-Authenticate": 'Basic realm="GPW Tracker", charset="UTF-8"'})
 
 
 def con():
@@ -336,12 +349,13 @@ def status():
 
 @app.post("/api/collect")
 def run_collect():
-    if _job["running"]:
-        return jsonify({"started": False, "msg": "Zbieranie już trwa"})
     weekly = bool((request.get_json(silent=True) or {}).get("weekly"))
+    with _job_lock:  # serwer wielowątkowy: dwa kliknięcia naraz nie mogą uruchomić dwóch pobierań
+        if _job["running"]:
+            return jsonify({"started": False, "msg": "Zbieranie już trwa"})
+        _job["running"] = True
 
     def work():
-        _job["running"] = True
         try:
             collect.run(weekly=weekly)
         finally:
@@ -353,6 +367,9 @@ def run_collect():
 
 if __name__ == "__main__":
     import sys
+    if SERVER_HOST not in ("127.0.0.1", "localhost", "::1") and not config.AUTH_PASSWORD:
+        sys.exit("Serwer ma nasłuchiwać poza tym komputerem (GPWT_HOST=%s) - ustaw najpierw GPWT_PASSWORD, "
+                 "bo bez hasła każdy mógłby edytować dane i uruchamiać pobieranie." % SERVER_HOST)
     if "--no-browser" not in sys.argv:
         threading.Timer(1.2, lambda: webbrowser.open(f"http://{SERVER_HOST}:{SERVER_PORT}")).start()
     app.run(host=SERVER_HOST, port=SERVER_PORT, debug=False)

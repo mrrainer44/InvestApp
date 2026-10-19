@@ -1,0 +1,10 @@
+[Unit]
+Description=GPW Tracker - pobieranie codziennie o 18:30
+
+[Timer]
+OnCalendar=*-*-* 18:30:00 Europe/Warsaw
+# serwer był wyłączony o 18:30 -> pobierz zaraz po starcie (jak "StartWhenAvailable" w Windows)
+Persistent=true
+
+[Install]
+WantedBy=timers.target

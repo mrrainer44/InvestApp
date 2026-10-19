@@ -1,0 +1,14 @@
+[Unit]
+Description=GPW Tracker - codzienne pobieranie danych
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=gpwtracker
+WorkingDirectory=/opt/gpw-tracker
+EnvironmentFile=/etc/gpw-tracker.env
+ExecStart=/opt/gpw-tracker/.venv/bin/python -m gpwt.collect
+TimeoutStartSec=4h
+NoNewPrivileges=true
+PrivateTmp=true
