@@ -304,7 +304,7 @@ function flowChart(days, start, end) {
   lo = Math.floor(lo / step) * step; hi = Math.ceil(hi / step) * step;
   if (hi === lo) hi = lo + step;
   const y = (v) => T + (1 - (v - lo) / (hi - lo)) * (H - T - B);
-  const bw = Math.max(3, Math.min(24, ((W - L - R) / ((t1 - t0) / day)) * 0.7));
+  const bw = Math.max(4, Math.min(24, ((W - L - R) / ((t1 - t0) / day)) * 0.7));
   const grid = [];
   for (let v = lo; v <= hi + step / 2; v += step) {
     grid.push(`<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}" class="${v === 0 ? "zero" : "gl"}"/>
@@ -328,8 +328,7 @@ function flowChart(days, start, end) {
   const fmtD = (dt) => dt.toISOString().slice(0, 10);
   return `<div class="chart-wrap"><svg class="flowchart" viewBox="0 0 ${W} ${H}" role="img"
       aria-label="Dzienne saldo przepływów kapitału od ${fmtD(start)} do ${fmtD(end)}">
-      ${grid.join("")}${pts.map(bar).join("")}
-      <path d="${line}" class="cum"/>
+      ${grid.join("")}<path d="${line}" class="cum"/>${pts.map(bar).join("")}
       <circle cx="${W - R}" cy="${y(prev)}" r="4" class="cum-dot"/>
       <text x="${W - R + 8}" y="${y(prev) + 4}" class="endl">${prev > 0 ? "+" : ""}${fmtMoney(prev)}</text>
       <text x="${L}" y="${H - 6}" class="xl">${fmtD(start)}</text>
