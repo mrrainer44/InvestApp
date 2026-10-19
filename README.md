@@ -55,6 +55,8 @@ twoja-domena.pl {
 ```
 Zmienne w `/etc/gpw-tracker.env`: `GPWT_USER`, `GPWT_PASSWORD`, `GPWT_BIND`, `TZ=Europe/Warsaw` (daty sesji liczone są wg czasu polskiego). Logi: `journalctl -u gpw-tracker` i `logs/collect.log`.
 
+**Analizy fundamentalne z OneDrive (opcjonalnie):** pliki z wybranego folderu OneDrive trafiają co 15 minut do `data/analyses` (rclone sync, `deploy/gpw-tracker-af-sync.*`). Aplikacja przypisuje je do spółki po tickerze w nazwie pliku (np. `CDR_analiza_2026-10-19.pdf`) albo po nazwie spółki. Dla każdej spółki widać je w kolumnie „AF” i w panelu spółki. Do synchronizacji użyj osobnego remote'a rclone z uprawnieniami tylko do odczytu (`access_scopes = Files.Read Files.Read.All Sites.Read.All offline_access`) w `/var/lib/gpw-tracker/rclone.conf`, a ścieżkę ustaw w `GPWT_AF_REMOTE` w `/etc/gpw-tracker.env`.
+
 **Uwaga o danych:** notowania, wskaźniki, akcjonariat i komunikaty pochodzą z Biznesradar.pl i serwisów GPW, a ich regulaminy dopuszczają użytek prywatny. Serwer z hasłem dla kilku osób to nadal użytek prywatny. Udostępnienie danych publicznie, bez logowania, byłoby dalszą publikacją cudzych treści.
 
 ## Skąd są dane
