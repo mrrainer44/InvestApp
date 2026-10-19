@@ -13,7 +13,7 @@ Kliknięcie tickera otwiera panel spółki: wykres kursu, akcjonariat, zmiany, d
 ## Instalacja (Windows)
 
 1. Zainstaluj **Python 3.10+** z python.org (zaznacz „Add python.exe to PATH”).
-2. Rozpakuj folder w dowolnym miejscu, np. `C:\Users\barte\OneDrive\Dokumenty\Bartek\TRADING\GPW Tracker`.
+2. Rozpakuj folder w dowolnym miejscu, np. `C:\Users\<użytkownik>\Dokumenty\GPW Tracker`.
 3. Uruchom **`install.bat`** – utworzy środowisko, zainstaluje biblioteki i doda zadanie w Harmonogramie zadań (codziennie 18:30; jeśli komputer był wyłączony, uruchomi się po włączeniu).
 4. Uruchom **`pierwsze_pobranie.bat`** – pierwszy pełny przebieg trwa ok. 40 minut.
 5. Uruchom **`start.bat`** – aplikacja otworzy się w przeglądarce pod `http://127.0.0.1:8050`. To okno musi zostać otwarte, dopóki korzystasz z aplikacji – zamknięcie go wyłącza serwer.

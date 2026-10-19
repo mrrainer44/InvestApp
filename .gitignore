@@ -3,3 +3,13 @@ logs/
 .venv/
 __pycache__/
 *.pyc
+# repozytorium jest publiczne - nigdy nie wysyłaj baz, haseł ani ustawień lokalnych
+.claude/
+*.sqlite
+*.sqlite-*
+*.db
+.env
+*.env
+!deploy/*.env.example
+secrets*.json
+*token*.json
