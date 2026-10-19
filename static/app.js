@@ -265,7 +265,7 @@ const FACT_INFO = {
   dy: ["Stopa dywidendy", "Dywidendy wypłacone w ostatnich 12 miesiącach w stosunku do obecnego kursu.",
     (v) => !v ? ["neutral", "Brak dywidendy w ostatnich 12 miesiącach."] : v < 3 ? ["neutral", "Niska."]
       : v <= 7 ? ["good", "Dobra - regularny dochód gotówkowy."] : ["warn", "Bardzo wysoka - sprawdź, czy nie jednorazowa i czy spółkę na nią stać."]],
-  flow: ["Przepływ 30 dni", "Szacowane saldo zakupów minus sprzedaży dużych inwestorów (zawiadomienia art. 69, insiderzy, fundusze) z ostatnich 30 dni.",
+  flow: ["Przepływ 30 dni", "Saldo zakupów minus sprzedaży zgłoszonych przez dużych inwestorów (zawiadomienia art. 69, insiderzy, fundusze) z ostatnich 30 dni. Nie obejmuje inwestorów, którzy nie muszą się ujawniać, więc nie jest to cały ruch na akcjach.",
     (v) => !v ? ["neutral", "Brak zarejestrowanych ruchów w ostatnich 30 dniach."] : v > 0 ? ["good", "Dodatni - duzi gracze dokupowali."]
       : ["bad", "Ujemny - duzi gracze sprzedawali."]],
 };
@@ -410,8 +410,10 @@ function renderChart() {
       <span><i class="key cum"></i>saldo narastające <b>${net > 0 ? "+" : ""}${fmtMoney(net)}</b></span>
     </div>
     ${flowChart(flows, start, end)}
-    <p class="dim chart-note">Słupek nad osią = kapitał napłynął, pod osią = odpłynął. Źródła: zawiadomienia art. 69, insiderzy (MAR),
-      fundusze, główni akcjonariusze. Zmiany w portfelach OFE mają datę sprawozdania (30.06 i 31.12). Szczegóły w tabeli „Zmiany stanu posiadania” niżej.</p>`;
+    <p class="dim chart-note">Słupek nad osią = zgłoszeni duzi inwestorzy więcej kupili, pod osią = więcej sprzedali. To tylko transakcje,
+      które musiały zostać ujawnione (przekroczenie progów 5%, 10%…, insiderzy, sprawozdania funduszy), a nie cały rynek: każdą sprzedaż
+      ktoś kupił, często niezgłaszający inwestor (fundusz poniżej 5%, zagraniczny, indywidualny). Zmiany w portfelach OFE mają datę sprawozdania
+      (30.06 i 31.12). Szczegóły w tabeli „Zmiany stanu posiadania” niżej.</p>`;
   bindFlowTips(body, flows);
 }
 
