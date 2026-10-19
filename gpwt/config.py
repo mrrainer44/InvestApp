@@ -33,6 +33,8 @@ SERVER_PORT = int(os.environ.get("GPWT_PORT", "8050"))
 # Logowanie (HTTP Basic) - włączone, gdy ustawione jest hasło. Wymagane przy wystawieniu poza ten komputer.
 AUTH_USER = os.environ.get("GPWT_USER", "gpw")
 AUTH_PASSWORD = os.environ.get("GPWT_PASSWORD", "")
+# Świadomy wybór dla sieci domowej: bez hasła, ale tylko dla adresów prywatnych (LAN) i lokalnych.
+LAN_NO_PASSWORD = os.environ.get("GPWT_LAN_NO_PASSWORD") == "1"
 
 for d in (DATA_DIR, LOG_DIR, PDF_CACHE):
     d.mkdir(parents=True, exist_ok=True)

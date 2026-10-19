@@ -1,5 +1,6 @@
 """Serwer aplikacji: http://127.0.0.1:8050  (uruchom: python app.py; na serwerze: gunicorn wsgi:app)"""
 import hmac
+import ipaddress
 import json
 import re
 import threading
@@ -21,6 +22,10 @@ _job_lock = threading.Lock()
 @app.before_request
 def require_login():
     if not config.AUTH_PASSWORD:
+        if config.LAN_NO_PASSWORD:
+            ip = ipaddress.ip_address(request.remote_addr or "0.0.0.0")
+            if not (ip.is_private or ip.is_loopback):
+                abort(403)
         return None
     a = request.authorization
     if a and hmac.compare_digest((a.username or "").encode(), config.AUTH_USER.encode()) \
@@ -367,7 +372,7 @@ def run_collect():
 
 if __name__ == "__main__":
     import sys
-    if SERVER_HOST not in ("127.0.0.1", "localhost", "::1") and not config.AUTH_PASSWORD:
+    if SERVER_HOST not in ("127.0.0.1", "localhost", "::1") and not (config.AUTH_PASSWORD or config.LAN_NO_PASSWORD):
         sys.exit("Serwer ma nasłuchiwać poza tym komputerem (GPWT_HOST=%s) - ustaw najpierw GPWT_PASSWORD, "
                  "bo bez hasła każdy mógłby edytować dane i uruchamiać pobieranie." % SERVER_HOST)
     if "--no-browser" not in sys.argv:

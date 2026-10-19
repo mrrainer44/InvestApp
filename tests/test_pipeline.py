@@ -367,6 +367,15 @@ def test_pipeline():
     finally:
         config.AUTH_PASSWORD = ""
     assert cl.get("/api/status").status_code == 200
+    # tryb sieci domowej bez hasła: tylko adresy prywatne/lokalne
+    config.LAN_NO_PASSWORD = True
+    try:
+        assert cl.get("/api/status", environ_base={"REMOTE_ADDR": "192.168.1.15"}).status_code == 200
+        assert cl.get("/api/status", environ_base={"REMOTE_ADDR": "127.0.0.1"}).status_code == 200
+        assert cl.get("/api/status", environ_base={"REMOTE_ADDR": "8.8.8.8"}).status_code == 403
+        assert cl.post("/api/collect", json={}, environ_base={"REMOTE_ADDR": "83.10.20.30"}).status_code == 403
+    finally:
+        config.LAN_NO_PASSWORD = False
     print("OK – potok i API działają")
 
 
