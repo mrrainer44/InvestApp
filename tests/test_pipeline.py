@@ -252,6 +252,13 @@ def test_pipeline():
     espi.pdf_text = fake_pdf_text
     db.init()
 
+    # rodzaj instrumentu z formularzy MAR ("transakcja" zawiera "akcj", ale to nie akcje)
+    from gpwt.espi import instrument_is_shares as is_sh
+    assert is_sh("Akcje zwykłe na okaziciela") and is_sh("akcji serii B")
+    assert not is_sh("Negocjowana terminowa transakcja wymiany walut")
+    assert not is_sh("uprawnienia do emisji gazów cieplarnianych") and not is_sh("Kontrakt terminowy na akcje PGE")
+    assert not is_sh("Obligacje") and not is_sh("Instrument dłużny")
+
     # nowszy układ Biznesradar: <th> bezpośrednio w <thead>, bez <tr>; pierwszy wiersz to już dane
     ret2 = collect.br.parse_returns(
         '<table><thead><th>Profil</th><th>1t</th><th>1m</th><th>3m</th></thead><tbody>'

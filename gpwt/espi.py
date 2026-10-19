@@ -50,6 +50,16 @@ def classify(title):
     return "other"
 
 
+_NOT_SHARES = re.compile(r"obligacj|warrant|opcj|prawa do akcji|\bPDA\b|certyfikat|kontrakt|terminow|swap|forward|"
+                         r"futures|walut|uprawnie\w* do emisji|emisji gaz|\bCO2\b|jednost\w* uczestnictwa|instrument\w* pochodn",
+                         re.I)
+
+
+def instrument_is_shares(instrument):
+    """Czy rodzaj instrumentu z formularza MAR to akcje. "\\bakcj", bo "transakcja" też zawiera "akcj"."""
+    return bool(re.search(r"\bakcj|\bshares?\b", instrument, re.I)) and not _NOT_SHARES.search(instrument)
+
+
 def pdf_text(data):
     try:
         from pypdf import PdfReader
@@ -181,8 +191,7 @@ def parse_mar(text):
     m = re.search(r"rodzaj instrumentu\s*\n(?:\s*Kod identyfikacyjny\s*\n)?\s*([^\n]+)", t, re.I)
     if m:
         res["instrument"] = m.group(1).strip()[:120]
-        res["is_shares"] = bool(re.search(r"akcj", res["instrument"], re.I)) and not re.search(
-            r"obligacj|warrant|opcj|prawa do akcji|\bPDA\b|certyfikat|kontrakt", res["instrument"], re.I)
+        res["is_shares"] = instrument_is_shares(res["instrument"])
     kind = _line_after("Rodzaj transakcji", t)
     if kind:
         res["kind"] = kind[:120]

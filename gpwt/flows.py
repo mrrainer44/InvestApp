@@ -18,6 +18,7 @@ import time
 from datetime import date, timedelta
 
 from . import biznesradar as br
+from . import espi
 from .util import ascii_fold, iso_week, norm_investor
 
 log = logging.getLogger("gpwt.flows")
@@ -71,12 +72,24 @@ def rebuild_changes(con):
                 n["chg_art69"] += 1
             else:
                 price = f.get("price")
-                not_shares = f.get("is_shares") is False
+                instr = f.get("instrument")
                 note = " / ".join(x for x in (f.get("position"), f.get("kind")) if x)
-                if not_shares:
-                    note += f" [instrument: {f.get('instrument')} - nie akcje, wykluczone z sum]"
+                reason = None
+                if instr and not espi.instrument_is_shares(instr):
+                    reason = f"instrument: {instr}"
+                elif not instr and price:
+                    # formularz bez rodzaju instrumentu: cena kilka razy inna niż kurs akcji = obligacje, kontrakty itp.
+                    # (przy "akcje" wierzymy formularzowi - programy motywacyjne bywają po cenie nominalnej)
+                    mkt = near_price(con, row["ticker"], d)
+                    if mkt and not (1 / 3 <= price / mkt <= 3):
+                        reason = f"cena {price:,.2f} zł przy kursie akcji ok. {mkt:,.2f} zł".replace(",", " ")
+                if reason:
+                    note += f" [{reason} - to nie akcje, wykluczone z sum]"
                 _ins(con, **base, price=price, price_src="MAR" if price else None,
-                     value=(f["delta"] * price) if price else None, excluded=1 if not_shares else 0, note=note)
+                     value=(f["delta"] * price) if price else None, excluded=1 if reason else 0, note=note)
+                if reason:  # już zapisana zmiana z dawną (błędną) oceną
+                    con.execute("UPDATE changes SET excluded=1, note=? WHERE source='mar' AND espi_id=? "
+                                "AND excluded=0 AND verified=0", (note, base["espi_id"]))
                 n["chg_mar"] += 1
 
     # --- różnice w kolejnych odczytach akcjonariatu ---
@@ -147,6 +160,15 @@ def split_factor(con, ticker, d1, d2):
             if n >= 2 and abs(ratio - n) / n < 0.12:
                 k = k * n if sign == 1 else k / n
     return k
+
+
+def near_price(con, ticker, d, days=120):
+    """Kurs zamknięcia najbliższy dacie d (w obie strony, do `days` dni) - do zgrubnej kontroli ceny."""
+    r = con.execute("SELECT close FROM price_history WHERE ticker=? AND date BETWEEN ? AND ? "
+                    "ORDER BY ABS(julianday(date) - julianday(?)) LIMIT 1",
+                    (ticker, (date.fromisoformat(d) - timedelta(days=days)).isoformat(),
+                     (date.fromisoformat(d) + timedelta(days=days)).isoformat(), d)).fetchone()
+    return r["close"] if r else None
 
 
 def price_on(con, ticker, d):
