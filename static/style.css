@@ -105,7 +105,7 @@ input[type="search"] { min-width: 220px; }
 .down { color: var(--loss); }
 .dim { color: var(--muted); }
 .tk { font-weight: 600; color: var(--accent); cursor: pointer; text-decoration: none; }
-.tag { font-family: "IBM Plex Sans", sans-serif; font-size: 12px; padding: 1px 7px; border-radius: 999px;
+.tag { font-family: "IBM Plex Sans", sans-serif; font-size: 12px; padding: 1px 7px; border-radius: 999px; white-space: nowrap;
   border: 1px solid var(--line); color: var(--muted); }
 .tag.art69 { color: var(--accent); border-color: var(--accent); }
 .tag.mar { color: var(--signal); border-color: var(--signal); }

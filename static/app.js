@@ -902,7 +902,7 @@ function renderSession(d) {
 
   const holders = d.holders.length ? `<table class="stable"><thead><tr><th>Publikacja</th><th>Spółka</th><th>Kto</th><th>Rodzaj</th>
       <th class="n">Akcje</th><th class="n">Wartość</th><th class="n">Kurs dziś</th></tr></thead><tbody>
-      ${d.holders.map((h) => `<tr class="${h.transfer ? "muted-row" : ""}"><td class="dim">${esc(h.ts.slice(5, 16).replace("-", ".").split(" ").reverse().join(" "))}</td>
+      ${d.holders.map((h) => `<tr class="${h.transfer ? "muted-row" : ""}"><td class="dim n">${esc(h.ts.slice(8, 10) + "." + h.ts.slice(5, 7) + " " + h.ts.slice(11, 16))}</td>
         <td><a class="tk" href="#" data-t="${esc(h.ticker)}">${esc(h.ticker)}</a></td>
         <td>${esc(h.investor)}${h.transfer ? ` <span class="sig info" title="Kupno i sprzedaż w tej spółce się znoszą – przesunięcie między powiązanymi podmiotami">przesunięcie</span>` : ""}</td>
         <td><span class="tag ${h.source}">${h.source === "mar" ? "insider (MAR)" : "art. 69"}</span></td>
