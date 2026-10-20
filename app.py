@@ -63,16 +63,33 @@ def index():
 
 def _dividend_split(dl, today, y_ago, prev_session):
     """Dywidendy spółki: wypłacone w 12 mies. (po dniu odcięcia = dzień po ostatnim dniu z prawem), zapowiedziane,
-    podział na regularne i jednorazowe. Wypłata jest jednorazowa, gdy jest ponad 2x wyższa od mediany pozostałych
-    wypłat spółki (potrzebne co najmniej 2 inne wypłaty w historii)."""
+    podział na regularne i jednorazowe. Wypłata jest jednorazowa, gdy jednocześnie:
+      - jest ponad 2x wyższa od mediany wypłat z 3 poprzednich lat (co najmniej 2 wypłaty),
+      - suma dywidend za jej rok obrotowy jest ponad 1,6x wyższa niż za rok poprzedni
+    (drugi warunek odróżnia jednorazowy skok od spółek, które z roku na rok płacą więcej, np. banki)."""
     t = today.isoformat()
-    dated = [d for d in dl if (d["dps"] or 0) > 0 and (d["last_day"] or d["pay_day"])]
+    seen, dated = set(), []
+    for d in sorted(dl, key=lambda d: d["last_day"] or d["pay_day"] or ""):
+        day = d["last_day"] or d["pay_day"]
+        if (d["dps"] or 0) > 0 and day and (day, d["dps"]) not in seen:  # ta sama wypłata bywa w dwóch rocznikach
+            seen.add((day, d["dps"]))
+            dated.append(d)
     paid12 = [d for d in dated if y_ago < (d["last_day"] or d["pay_day"]) < t]
     upcoming = [d for d in dl if (d["last_day"] or "") >= t]
+    year_total = {}
+    for d in dated:
+        year_total[d["year_for"]] = year_total.get(d["year_for"], 0) + d["dps"]
     oneoff = 0.0
     for d in paid12:
-        others = [o["dps"] for o in dated if o is not d]
-        if len(others) >= 2 and d["dps"] > 2 * statistics.median(others):
+        day = d["last_day"] or d["pay_day"]
+        start = f"{int(day[:4]) - 3}{day[4:]}"
+        prev = [o["dps"] for o in dated if start <= (o["last_day"] or o["pay_day"]) < day]
+        try:
+            prev_year = year_total.get(str(int(d["year_for"]) - 1), 0)
+        except (TypeError, ValueError):
+            continue
+        if len(prev) >= 2 and d["dps"] > 2 * statistics.median(prev) \
+                and year_total.get(d["year_for"], 0) > 1.6 * prev_year:
             oneoff += d["dps"]
     dps12 = sum(d["dps"] for d in paid12) if paid12 else None
     ex = next((d for d in dl if prev_session and d["last_day"] == prev_session and (d["dps"] or 0) > 0), None)
