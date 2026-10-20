@@ -466,6 +466,11 @@ def test_pipeline():
     assert upd["value"] == -420000 and upd["price_src"] == "ręcznie"
     assert cl.get("/api/espi?days=3650&categories=art69,mar").status_code == 200
     assert cl.get("/api/company/PKO").get_json()["dividends"]
+    # ocena AF ustawiona w panelu spółki = ta sama wartość co w kolumnie tabeli
+    cl.put("/api/values", json={"ticker": "PKO", "key": "ocena_af", "value": "Obserwuj"})
+    pc = cl.get("/api/company/PKO").get_json()
+    assert pc["custom"]["ocena_af"] == "Obserwuj" and pc["af_column"]["options"] == ["Warto", "Obserwuj", "Nie warto"]
+    assert next(x for x in cl.get("/api/companies").get_json() if x["ticker"] == "PKO")["c_ocena_af"] == "Obserwuj"
     assert cl.get("/api/status").get_json()["counts"]["companies"] == 7
     assert any(r["ticker"] == "SHO" for r in rows)  # wycofana spółka widoczna w widoku Spółki
     assert cl.post("/api/aliases", json={"alias_norm": out["investor_norm"], "canonical": "Hegen Invest"}).status_code == 200

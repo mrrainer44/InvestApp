@@ -208,7 +208,12 @@ def company(ticker):
         "holder_groups": flows.holder_groups(c, ticker),
         "analyses": analyses.scan(c).get(ticker, []),
         "ohlc": pressure.series(c, ticker, (date.today() - timedelta(days=400)).isoformat()),
+        "custom": {r["key"]: r["value"] for r in c.execute("SELECT key, value FROM custom_values WHERE ticker=?",
+                                                           (ticker,))},
     }
+    af_col = c.execute("SELECT key, label, options FROM custom_columns WHERE key='ocena_af'").fetchone()
+    res["af_column"] = ({"key": af_col["key"], "label": af_col["label"], "options": json.loads(af_col["options"] or "[]")}
+                        if af_col else None)
     c.close()
     return jsonify(res)
 

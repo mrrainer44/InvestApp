@@ -197,6 +197,7 @@ async function loadCompanies() {
     let v = cell.getValue();
     if (v === false) v = "";
     await api("/api/values", { method: "PUT", body: { ticker: cell.getRow().getIndex(), key, value: v } });
+    if (key === "ocena_af") syncAfRating(cell.getRow().getIndex(), key, v || "");
     toast("Zapisano");
   });
 }
@@ -291,7 +292,7 @@ document.addEventListener("click", (e) => {
   const a = e.target.closest("a.tk"); if (!a) return;
   e.preventDefault(); openCompany(a.dataset.t);
 });
-$("#drawerClose").addEventListener("click", () => { $("#drawer").classList.remove("open"); $("#drawer").setAttribute("aria-hidden", "true"); });
+$("#drawerClose").addEventListener("click", () => { drawerTicker = null; $("#drawer").classList.remove("open"); $("#drawer").setAttribute("aria-hidden", "true"); });
 document.addEventListener("keydown", (e) => { if (e.key === "Escape") $("#drawerClose").click(); });
 
 /* --- wskaźniki z objaśnieniem: co to jest i jak czytać obecny odczyt (progi orientacyjne) --- */
@@ -614,7 +615,34 @@ function sparkline(prices) {
     <div class="dim" style="display:flex;justify-content:space-between;font-size:12px"><span>${prices[0].date} · ${fmtNum(v[0])}</span><span>${prices.at(-1).date} · ${fmtNum(v.at(-1))}</span></div>`;
 }
 
+/* ocena analizy fundamentalnej - ta sama wartość co w kolumnie "Ocena AF" tabeli spółek */
+let drawerTicker = null;
+const AF_TONE = { "Warto": "up", "Obserwuj": "info", "Nie warto": "down" };
+function afRatingControl(d) {
+  const col = d.af_column;
+  if (!col) return `<p class="dim chart-note">Kolumna „Ocena AF” została usunięta – dodaj kolumnę typu lista o tej nazwie, żeby oceniać analizy.</p>`;
+  const cur = d.custom?.[col.key] || "";
+  return `<div class="af-rate" role="radiogroup" aria-label="${esc(col.label)}" data-key="${esc(col.key)}">
+      <span class="dim">${esc(col.label)}:</span>
+      ${[...col.options, ""].map((o) => `<button type="button" role="radio" aria-checked="${o === cur}" data-v="${esc(o)}"
+        class="${o ? AF_TONE[o] || "" : "none"}">${o ? esc(o) : "brak oceny"}</button>`).join("")}
+    </div>`;
+}
+function syncAfRating(ticker, key, value) {
+  if (drawerTicker === ticker) $$(`#drawerBody .af-rate[data-key="${key}"] button`).forEach((b) => b.setAttribute("aria-checked", String(b.dataset.v === value)));
+  const r = tblCompanies?.getRow(ticker);
+  if (r && r.getData()[`c_${key}`] !== value) r.update({ [`c_${key}`]: value });
+}
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest(".af-rate button"); if (!b || !drawerTicker) return;
+  const key = b.closest(".af-rate").dataset.key, value = b.dataset.v, t = drawerTicker;
+  await api("/api/values", { method: "PUT", body: { ticker: t, key, value } });
+  syncAfRating(t, key, value);
+  toast(value ? `Ocena: ${value}` : "Usunięto ocenę");
+});
+
 async function openCompany(t) {
+  drawerTicker = t;
   const d = await api(`/api/company/${encodeURIComponent(t)}`);
   const row = tblCompanies?.getRow(t)?.getData() || {};
   const c = d.company;
@@ -635,13 +663,13 @@ async function openCompany(t) {
     <p class="dim chart-note lvl-legend">${["good", "neutral", "warn", "bad"].map((l) => `${levelIcon(l)} ${LEVEL[l].toLowerCase()}`).join(" · ")}
       - najedź na wskaźnik, żeby zobaczyć objaśnienie. Progi są orientacyjne, to nie rekomendacja.</p>
     <section id="companyChart" aria-label="Wykres"><div class="chart-ctl"></div><div class="chart-body"></div></section>
-    <h3>Analiza fundamentalna ${row.c_ocena_af ? `<span class="af-rating">${esc(row.c_ocena_af)}</span>` : ""}</h3>
+    <h3>Analiza fundamentalna</h3>
+    ${afRatingControl(d)}
     ${d.analyses.length ? `<table>${d.analyses.map((a) => `<tr><td style="white-space:nowrap">${esc(a.date)}</td>
         <td><a href="/af/${a.file.split("/").map(encodeURIComponent).join("/")}" target="_blank" rel="noopener">${esc(a.name)}</a></td>
         <td class="n dim">${fmtNum(a.size / 1024, 0)} KB</td></tr>`).join("")}</table>`
       : `<p class="dim">Brak analizy. Zapisz plik w folderze „Analizy fundamentalne” w OneDrive z tickerem w nazwie
           (np. ${esc(c.ticker)}_analiza.pdf) - pojawi się tu po synchronizacji (co 15 minut).</p>`}
-    <p class="dim chart-note">Ocenę (Warto / Obserwuj / Nie warto) ustawisz w kolumnie „Ocena AF” w tabeli spółek.</p>
     <h3>Akcjonariat (ostatni odczyt)</h3>
     ${holderGroups(d.holder_groups || [])}
     <h3>Zmiany stanu posiadania</h3>

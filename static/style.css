@@ -284,3 +284,14 @@ dialog .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 18
 ul.esp { list-style: none; margin: 0; padding: 0; font-size: 13.5px; }
 ul.esp li { padding: 4px 0; border-bottom: 1px solid var(--line); }
 @media (max-width: 1100px) { .kpis, .scols { grid-template-columns: 1fr; } }
+
+/* ---- ocena analizy fundamentalnej w panelu spółki ---- */
+.af-rate { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 10px; }
+.af-rate button { font: inherit; font-size: 13px; padding: 3px 12px; border-radius: 999px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--muted); }
+.af-rate button:hover { border-color: var(--accent); }
+.af-rate button[aria-checked="true"] { font-weight: 600; color: var(--panel); }
+.af-rate button.up[aria-checked="true"] { background: var(--gain); border-color: var(--gain); }
+.af-rate button.down[aria-checked="true"] { background: var(--loss); border-color: var(--loss); }
+.af-rate button.info[aria-checked="true"], .af-rate button[aria-checked="true"]:not(.up):not(.down):not(.none) { background: var(--accent); border-color: var(--accent); }
+.af-rate button.none[aria-checked="true"] { background: var(--paper); color: var(--ink); border-color: var(--muted); }
