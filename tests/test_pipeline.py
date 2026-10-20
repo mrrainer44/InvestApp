@@ -339,6 +339,13 @@ def test_pipeline():
     mem.execute("UPDATE changes SET date='2026-10-15', verified=1 WHERE espi_id=90")
     flows.rebuild_changes(mem)
     assert [r[0] for r in mem.execute("SELECT date FROM changes WHERE espi_id=90")] == ["2026-10-15"]
+    # ten sam raport opublikowany dwa razy (MTN 2/2026 o 13:35 i 13:56) liczy się raz
+    for i, ts in ((20, "2026-01-09 13:35"), (21, "2026-01-09 13:56")):
+        mem.execute("INSERT INTO espi(id, ticker, title, ts, category, parsed, fetched) VALUES(?,'MTN','MTN (2/2026) "
+                    "zawiadomienie',?,'art69',?,1)", (i, ts, json.dumps({"forms": [{"investor": "SANFORD JOANNA",
+                                                                                    "delta": 33397682}]})))
+    flows.rebuild_changes(mem)
+    assert [r[0] for r in mem.execute("SELECT excluded FROM changes WHERE ticker='MTN' ORDER BY espi_id")] == [0, 1]
 
     # Bankier.pl: lista komunikatów spółki (bez artykułów redakcji i bocznych list innych spółek) i dopasowanie
     from gpwt import bankier

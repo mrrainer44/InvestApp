@@ -153,6 +153,21 @@ def rebuild_changes(con):
                     con.execute("UPDATE changes SET excluded=1, note=COALESCE(note,'')||' [zastąpione korektą]' "
                                 "WHERE id=? AND excluded=0", (o["id"],))
 
+    # --- to samo zawiadomienie opublikowane drugi raz (ponowna publikacja raportu, ESPI i EBI): ta sama osoba, data
+    # i liczba akcji z innego raportu do 7 dni później -> liczymy raz (pierwszy raport)
+    first = {}
+    for o in con.execute("SELECT c.id, c.ticker, c.investor_norm, c.date, c.delta, c.source, c.espi_id, e.ts "
+                         "FROM changes c JOIN espi e ON e.id=c.espi_id/10 WHERE c.source IN ('mar','art69') "
+                         "AND c.excluded=0 ORDER BY e.ts, c.id").fetchall():
+        k = (o["ticker"], o["investor_norm"], o["date"], o["delta"], o["source"])
+        f = first.get(k)
+        if f is None:
+            first[k] = o
+        elif f["espi_id"] // 10 != o["espi_id"] // 10 and \
+                (datetime.fromisoformat(o["ts"][:16]) - datetime.fromisoformat(f["ts"][:16])).days <= 7:
+            con.execute("UPDATE changes SET excluded=1, note=COALESCE(note,'')||' [duplikat raportu]' "
+                        "WHERE id=? AND verified=0", (o["id"],))
+
     # --- deduplikacja: zmiana z akcjonariatu/WZ, która jest już w zawiadomieniu art. 69 ---
     art = con.execute("SELECT ticker, investor_norm, date, delta FROM changes WHERE source='art69'").fetchall()
     by_t = {}
