@@ -1,0 +1,14 @@
+[Unit]
+Description=GPW Tracker - szybkie pobieranie w dni sesyjne o 10:00, 13:00 i 17:10
+
+[Timer]
+# 10:00 - pierwsza godzina handlu, 13:00 - środek sesji, 17:10 - po aukcji zamknięcia (kursy końcowe);
+# pełne pobieranie (wskaźniki, dywidendy, akcjonariat) zostaje o 18:30 w gpw-tracker-collect.timer
+OnCalendar=Mon..Fri 10:00:00 Europe/Warsaw
+OnCalendar=Mon..Fri 13:00:00 Europe/Warsaw
+OnCalendar=Mon..Fri 17:10:00 Europe/Warsaw
+# bez nadrabiania: stare "szybkie" pobranie po włączeniu serwera nie ma sensu
+Persistent=false
+
+[Install]
+WantedBy=timers.target

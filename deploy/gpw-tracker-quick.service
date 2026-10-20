@@ -1,0 +1,14 @@
+[Unit]
+Description=GPW Tracker - szybkie pobieranie w trakcie sesji (notowania i nowe komunikaty)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=gpwtracker
+WorkingDirectory=/opt/gpw-tracker
+EnvironmentFile=/etc/gpw-tracker.env
+ExecStart=/opt/gpw-tracker/.venv/bin/python -m gpwt.collect --quick
+TimeoutStartSec=30min
+NoNewPrivileges=true
+PrivateTmp=true

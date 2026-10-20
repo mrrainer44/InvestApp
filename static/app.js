@@ -37,6 +37,20 @@ const ratio = (cell) => { const v = cell.getValue(); if (v == null) return "";
 const yesno = (cell) => cell.getValue() ? "tak" : `<span class="dim">nie</span>`;
 const tickerFmt = (cell) => `<a class="tk" href="#" data-t="${esc(cell.getValue())}">${esc(cell.getValue())}</a>`;
 
+const chgFmt = (cell) => {
+  const d = cell.getRow().getData(), base = pct(cell);
+  if (!d.exdiv_today || d.price == null || d.change_pct == null) return base;
+  const prev = d.price / (1 + d.change_pct / 100), adj = ((d.price + d.exdiv_today) / prev - 1) * 100;
+  return `${base} <span class="badge" title="Dzień odcięcia dywidendy ${fmtNum(d.exdiv_today, 2)} zł (${fmtNum(d.exdiv_today / prev * 100, 1)}%). Po doliczeniu dywidendy: ${adj > 0 ? "+" : ""}${fmtNum(adj, 2)}%">D</span>`;
+};
+const divYieldFmt = (cell) => {
+  const v = cell.getValue(), d = cell.getRow().getData();
+  if (v == null) return "";
+  const warn = d.div_payout > 100 ? ` <span class="warn" title="Dywidendy z 12 mies. to ${fmtNum(d.div_payout, 0)}% zysku na akcję – wypłata ponad zysk, trudna do powtórzenia">⚠</span>` : "";
+  const one = cell.getField() === "div_yield" && d.div_oneoff12 ? ` <span class="badge" title="W tym wypłata jednorazowa ${fmtNum(d.div_oneoff12, 2)} zł na akcję">J</span>` : "";
+  return `${fmtNum(v, 2)}%${one}${cell.getField() === "div_yield_regular" ? warn : ""}`;
+};
+
 let flowScale = 1;
 const flowBar = (v, scale) => {
   if (v == null) return "";
@@ -64,7 +78,7 @@ const BUILTIN = [
   { field: "market", title: "Rynek", group: "base", headerFilter: "list", headerFilterParams: { valuesLookup: true, clearable: true }, width: 80 },
   { field: "sector", title: "Branża", group: "base", headerFilter: "list", headerFilterParams: { valuesLookup: true, clearable: true }, width: 160 },
   { field: "price", title: "Kurs", group: "quote", hozAlign: "right", formatter: num2, sorter: numSort },
-  { field: "change_pct", title: "Zmiana dzienna", group: "quote", hozAlign: "right", formatter: pct, sorter: numSort },
+  { field: "change_pct", title: "Zmiana dzienna", group: "quote", hozAlign: "right", formatter: chgFmt, sorter: numSort },
   { field: "turnover", title: "Obrót dziś", group: "quote", hozAlign: "right", formatter: money, sorter: numSort },
   { field: "avg_turnover_30d", title: "Śr. obrót 30 dni", group: "quote", hozAlign: "right", formatter: money, sorter: numSort },
   { field: "mcap", title: "Kapitalizacja", group: "quote", hozAlign: "right", formatter: money, sorter: numSort },
@@ -81,7 +95,13 @@ const BUILTIN = [
   { field: "cp", title: "C/P", group: "val", hozAlign: "right", formatter: ratio, sorter: numSort, visible: false },
   { field: "report", title: "Ostatni raport", group: "val", visible: false },
   { field: "div_has", title: "Dywidenda 12 mies.", headerTooltip: "Tak = dywidenda wypłacona w ostatnich 12 miesiącach albo już zapowiedziana (z ustalonym dniem prawa). Wcześniejsze wypłaty są w panelu spółki.", group: "div", formatter: yesno, headerFilter: "tickCross", headerFilterParams: { tristate: true }, hozAlign: "center" },
-  { field: "div_yield", title: "Stopa dyw. 12 mies.", group: "div", hozAlign: "right", formatter: (c) => c.getValue() == null ? "" : fmtNum(c.getValue(), 2) + "%", sorter: numSort },
+  { field: "div_yield", title: "Stopa dyw. 12 mies.", group: "div", hozAlign: "right", formatter: divYieldFmt, sorter: numSort,
+    headerTooltip: "Wszystkie dywidendy z dniem odcięcia w ostatnich 12 miesiącach, w relacji do kursu." },
+  { field: "div_yield_regular", title: "Stopa dyw. regularna", group: "div", hozAlign: "right", formatter: divYieldFmt, sorter: numSort,
+    headerTooltip: "Stopa z 12 miesięcy bez wypłat jednorazowych (ponad 2× wyższych od mediany innych wypłat spółki). ⚠ = wypłata wyższa niż zysk na akcję – trudna do powtórzenia." },
+  { field: "div_payout", title: "Wypłata / zysk", group: "div", hozAlign: "right", sorter: numSort, visible: false,
+    formatter: (c) => c.getValue() == null ? "" : `<span class="${c.getValue() > 100 ? "down" : ""}">${fmtNum(c.getValue(), 0)}%</span>`,
+    headerTooltip: "Dywidendy z 12 miesięcy jako % zysku na akcję z 4 ostatnich kwartałów (kurs / C/Z). Ponad 100% = spółka wypłaca więcej, niż zarabia." },
   { field: "div_dps12", title: "Dyw. na akcję 12 mies.", group: "div", hozAlign: "right", formatter: num2, sorter: numSort, visible: false },
   { field: "div_next_day", title: "Ostatni dzień z prawem", group: "div" },
   { field: "div_next_dps", title: "Najbliższa dywidenda", group: "div", hozAlign: "right", formatter: num2, sorter: numSort, visible: false },
@@ -817,20 +837,143 @@ $("#btnRunWeekly").addEventListener("click", () => startRun(true));
 function updateFoot(s) { const r = s.runs.find((x) => x.finished);
   $("#lastRun").textContent = r ? `Ostatnie pobranie: ${r.finished.replace("T", " ").slice(0, 16)} (${r.status === "ok" ? "udane" : "błąd"})` : "Jeszcze nic nie pobrano"; }
 
+/* ---------- sesja dziś ---------- */
+let sesPref = { min: 100000, market: "", watch: "" }, sesTimer = null;
+const SIG_LABEL = { insider_buy: "kupno", insider_sell: "sprzedaż", wezwanie: "wezwanie", skup: "skup", exdiv: "dywidenda",
+  move_up: "wzrost", move_down: "spadek", volume: "obrót", press_up: "akumulacja", press_down: "dystrybucja", transfer: "przesunięcie" };
+const SIG_TONE = { insider_buy: "up", move_up: "up", press_up: "up", insider_sell: "down", move_down: "down", press_down: "down",
+  wezwanie: "warn", volume: "warn", exdiv: "info", skup: "info", transfer: "info" };
+const sigChips = (sigs) => (sigs || []).map((s) =>
+  `<span class="sig ${SIG_TONE[s.kind] || ""}" title="${esc(s.text)}">${SIG_LABEL[s.kind] || s.kind}</span>`).join(" ");
+const sigList = (sigs) => (sigs || []).length
+  ? `<ul class="siglist">${sigs.map((s) => `<li><span class="sig ${SIG_TONE[s.kind] || ""}">${SIG_LABEL[s.kind] || s.kind}</span> ${esc(s.text)}</li>`).join("")}</ul>`
+  : `<span class="dim">bez sygnałów</span>`;
+const chgCell = (x) => {
+  const v = x.chg_eff, cls = v > 0 ? "up" : v < 0 ? "down" : "";
+  const raw = x.exdiv ? `<div class="dim" title="Zmiana kursu bez doliczenia dywidendy">kurs ${x.chg > 0 ? "+" : ""}${fmtNum(x.chg, 2)}%</div>` : "";
+  return `<span class="${cls}">${v > 0 ? "+" : ""}${fmtNum(v, 2)}%</span>${x.exdiv ? ` <span class="badge" title="Dzień odcięcia dywidendy ${fmtNum(x.exdiv.dps, 2)} zł – zmiana po jej doliczeniu">D</span>` : ""}${raw}`;
+};
+const ratioCell = (r) => r == null ? `<span class="dim">–</span>` : `${r >= 3 ? "<b>" : ""}${fmtNum(r, 1)}×${r >= 3 ? "</b>" : ""}`;
+
+function moversTable(rows, empty) {
+  if (!rows.length) return `<p class="dim">${empty}</p>`;
+  return `<table class="stable"><thead><tr><th>Spółka</th><th class="n">Zmiana</th><th class="n">Obrót</th>
+    <th class="n" title="Obrót dziś do średniej z 20 sesji">× śr.</th><th>Sygnały</th></tr></thead><tbody>
+    ${rows.map((x) => `<tr><td><a class="tk" href="#" data-t="${esc(x.ticker)}">${esc(x.ticker)}</a> <span class="dim nm">${esc(x.name)}</span></td>
+      <td class="n">${chgCell(x)}</td><td class="n">${fmtMoney(x.turnover)}</td><td class="n">${ratioCell(x.ratio)}</td>
+      <td>${sigChips(x.signals)}</td></tr>`).join("")}</tbody></table>`;
+}
+
+function breadthBar(b) {
+  const tot = b.up + b.flat + b.down || 1;
+  const seg = (n, cls, label) => n ? `<i class="${cls}" style="flex:${n}" title="${label}: ${n}"></i>` : "";
+  return `<div class="bbar" role="img" aria-label="Rośnie ${b.up}, bez zmian ${b.flat}, spada ${b.down}">
+      ${seg(b.up, "up", "Rośnie")}${seg(b.flat, "flat", "Bez zmian")}${seg(b.down, "down", "Spada")}</div>
+    <div class="blegend"><span><i class="up"></i>rośnie <b>${b.up}</b> (${fmtNum(b.up / tot * 100, 0)}%)</span>
+      <span><i class="flat"></i>bez zmian <b>${b.flat}</b></span>
+      <span><i class="down"></i>spada <b>${b.down}</b> (${fmtNum(b.down / tot * 100, 0)}%)</span></div>`;
+}
+
+function renderSession(d) {
+  if (!d.date) { $("#sesBody").innerHTML = `<p class="dim">Brak notowań – uruchom pobieranie w zakładce „Dane i ustawienia”.</p>`; return; }
+  $("#sesDate").textContent = d.date.split("-").reverse().join(".");
+  $("#sesAsOf").textContent = d.as_of ? `stan danych: ${d.as_of.replace("T", " ").slice(0, 16)}` : "";
+  const L = d.breadth.liquid, A = d.breadth.all, ut = L.up_turnover + L.down_turnover || 1;
+  const c = d.espi.counts, ins = (c.mar || 0) + (c.art69 || 0);
+  const kpi = `<div class="kpis">
+    <div class="kpi wide"><h3>Szerokość rynku – płynne spółki (${L.up + L.flat + L.down})</h3>${breadthBar(L)}
+      <p class="dim small">Wszystkie notowane: rośnie ${A.up}, spada ${A.down}, bez zmian ${A.flat}, bez handlu ${A.none}. Mediana zmiany płynnych: <b class="${L.median_change > 0 ? "up" : L.median_change < 0 ? "down" : ""}">${L.median_change == null ? "–" : (L.median_change > 0 ? "+" : "") + fmtNum(L.median_change, 2) + "%"}</b></p></div>
+    <div class="kpi"><h3>Obrót płynnych spółek</h3>
+      <div class="bbar"><i class="up" style="flex:${L.up_turnover || 0.0001}"></i><i class="down" style="flex:${L.down_turnover || 0.0001}"></i></div>
+      <div class="blegend"><span><i class="up"></i>w rosnących <b>${fmtMoney(L.up_turnover)}</b> (${fmtNum(L.up_turnover / ut * 100, 0)}%)</span>
+        <span><i class="down"></i>w spadających <b>${fmtMoney(L.down_turnover)}</b></span></div></div>
+    <div class="kpi"><h3>Komunikaty od ${esc(d.since.slice(5).split(" ")[0].split("-").reverse().join("."))} ${esc(d.since.split(" ")[1] || "")}</h3>
+      <div class="big">${d.espi.total}</div><p class="dim small">insiderzy i duzi akcjonariusze: <b>${ins}</b> · wezwania: <b>${c.wezwanie || 0}</b> · skup akcji: <b>${c.skup || 0}</b></p></div>
+  </div>`;
+
+  const w = d.watch;
+  const watchHtml = !w
+    ? `<p class="dim">Zaznacz swoje spółki w tabeli Spółki w kolumnie Tak/Nie (np. „Mam”, utwórz ją przyciskiem „Dodaj kolumnę”) albo w kolumnie listy, a potem wybierz ją wyżej w polu „Moje spółki z kolumny”.</p>`
+    : !w.rows.length ? `<p class="dim">W kolumnie „${esc(w.label)}” nie zaznaczono jeszcze żadnej spółki.</p>`
+    : `<table class="stable"><thead><tr><th>Spółka</th><th class="n">Kurs</th><th class="n">Zmiana</th><th class="n">Obrót</th><th class="n">× śr.</th><th>Co się dzieje</th></tr></thead><tbody>
+      ${w.rows.map((x) => `<tr><td><a class="tk" href="#" data-t="${esc(x.ticker)}">${esc(x.ticker)}</a> <span class="dim nm">${esc(x.name)}</span></td>
+        <td class="n">${fmtNum(x.close, 2)}</td><td class="n">${chgCell(x)}</td><td class="n">${fmtMoney(x.turnover)}</td><td class="n">${ratioCell(x.ratio)}</td>
+        <td>${sigList(x.signals)}</td></tr>`).join("")}</tbody></table>`;
+
+  const holders = d.holders.length ? `<table class="stable"><thead><tr><th>Publikacja</th><th>Spółka</th><th>Kto</th><th>Rodzaj</th>
+      <th class="n">Akcje</th><th class="n">Wartość</th><th class="n">Kurs dziś</th></tr></thead><tbody>
+      ${d.holders.map((h) => `<tr class="${h.transfer ? "muted-row" : ""}"><td class="dim">${esc(h.ts.slice(5, 16).replace("-", ".").split(" ").reverse().join(" "))}</td>
+        <td><a class="tk" href="#" data-t="${esc(h.ticker)}">${esc(h.ticker)}</a></td>
+        <td>${esc(h.investor)}${h.transfer ? ` <span class="sig info" title="Kupno i sprzedaż w tej spółce się znoszą – przesunięcie między powiązanymi podmiotami">przesunięcie</span>` : ""}</td>
+        <td><span class="tag ${h.source}">${h.source === "mar" ? "insider (MAR)" : "art. 69"}</span></td>
+        <td class="n ${h.delta > 0 ? "up" : "down"}">${h.delta > 0 ? "+" : ""}${fmtNum(h.delta, 0)}</td>
+        <td class="n">${h.value == null ? `<span class="dim">–</span>` : fmtMoney(h.value)}</td>
+        <td class="n">${h.chg == null ? "" : `<span class="${h.chg > 0 ? "up" : h.chg < 0 ? "down" : ""}">${h.chg > 0 ? "+" : ""}${fmtNum(h.chg, 2)}%</span>`}</td></tr>`).join("")}
+      </tbody></table>` : `<p class="dim">Brak nowych zawiadomień od zamknięcia poprzedniej sesji.</p>`;
+
+  const imp = d.espi.important.length ? `<ul class="esp">${d.espi.important.map((e) =>
+      `<li><span class="tag ${e.category}">${{ wezwanie: "wezwanie", skup: "skup akcji", wz_lista: "akcjonariusze na WZ" }[e.category] || e.category}</span>
+       ${e.ticker ? `<a class="tk" href="#" data-t="${esc(e.ticker)}">${esc(e.ticker)}</a>` : ""} ${esc(e.title)} <span class="dim">${esc(e.ts.slice(11, 16))}</span></li>`).join("")}</ul>`
+    : `<p class="dim">Brak.</p>`;
+
+  $("#sesBody").innerHTML = `${kpi}
+    <div class="scard"><h2>Moje spółki${w ? ` <span class="dim">– kolumna „${esc(w.label)}”</span>` : ""}</h2>${watchHtml}</div>
+    <div class="scols">
+      <div class="scard"><h2>Najmocniej rosną</h2>${moversTable(d.gainers, "Żadna płynna spółka nie rośnie.")}</div>
+      <div class="scard"><h2>Najmocniej spadają</h2>${moversTable(d.losers, "Żadna płynna spółka nie spada.")}</div>
+    </div>
+    <div class="scard"><h2>Skoki obrotu <span class="dim">– co najmniej 2× średniej z 20 sesji</span></h2>${moversTable(d.spikes, "Brak spółek z wyraźnie wyższym obrotem.")}</div>
+    <div class="scard"><h2>Insiderzy i duzi akcjonariusze <span class="dim">– zawiadomienia od zamknięcia poprzedniej sesji</span></h2>${holders}</div>
+    ${d.exdiv.length ? `<div class="scard"><h2>Dzień odcięcia dywidendy</h2><p class="dim small">Kurs spada o wartość dywidendy, bo kupujący dziś już jej nie dostaną – w zestawieniach liczymy zmianę po jej doliczeniu.</p>${moversTable(d.exdiv, "")}</div>` : ""}
+    <div class="scard"><h2>Wezwania, skup akcji, listy akcjonariuszy z walnych</h2>${imp}</div>`;
+}
+
+async function loadSession() {
+  const p = await api("/api/settings/session");
+  if (p) sesPref = { ...sesPref, ...p };
+  $("#sesMin").value = String(sesPref.min);
+  $$("#sesMkt button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.smkt === sesPref.market)));
+  await refreshSession();
+  clearInterval(sesTimer);
+  sesTimer = setInterval(() => { if (current === "session" && !document.hidden) refreshSession(); }, 5 * 60 * 1000);
+}
+async function refreshSession() {
+  const q = new URLSearchParams({ min: sesPref.min, market: sesPref.market, watch: sesPref.watch || "" });
+  const d = await api(`/api/session?${q}`);
+  $("#sesWatch").innerHTML = `<option value="">– wybierz –</option>` + d.watch_columns.map((c) =>
+    `<option value="${esc(c.key)}">${esc(c.label)}</option>`).join("");
+  $("#sesWatch").value = sesPref.watch || "";
+  renderSession(d);
+}
+const saveSesPref = () => { api("/api/settings/session", { method: "PUT", body: sesPref }).catch(() => {}); refreshSession(); };
+$("#sesMin").addEventListener("change", (e) => { sesPref.min = +e.target.value; saveSesPref(); });
+$("#sesWatch").addEventListener("change", (e) => { sesPref.watch = e.target.value; saveSesPref(); });
+$$("#sesMkt button").forEach((b) => b.addEventListener("click", () => {
+  sesPref.market = b.dataset.smkt;
+  $$("#sesMkt button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+  saveSesPref();
+}));
+$("#sesRefresh").addEventListener("click", async () => {
+  const r = await api("/api/collect", { method: "POST", body: { quick: true } });
+  toast(r.started ? "Pobieram notowania i nowe komunikaty – ok. minuty" : r.msg);
+  pollStatus();
+});
+
 /* ---------- nawigacja ---------- */
-const loaders = { companies: loadCompanies, investors: loadInvestors, changes: loadChanges, espi: loadEspi, settings: loadSettings };
+const loaders = { session: loadSession, companies: loadCompanies, investors: loadInvestors, changes: loadChanges, espi: loadEspi, settings: loadSettings };
 const loaded = {};
-let current = "companies";
+let current = "session";
 function showView(v) {
   current = v;
   $$(".rail [data-view]").forEach((b) => b.dataset.view === v ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
   $$("main > section").forEach((s) => { s.hidden = s.id !== `view-${v}`; });
   if (!loaded[v]) { loaded[v] = true; loaders[v]().catch((e) => toast("Błąd: " + e.message)); }
   else if (v === "settings") loadSettings();
+  else if (v === "session") refreshSession().catch(() => {});
   history.replaceState(null, "", `#${v}`);
 }
 function refreshCurrent() { Object.keys(loaded).forEach((k) => delete loaded[k]); showView(current); }
 $$(".rail [data-view]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
 const startView = location.hash.slice(1);
-showView(startView in loaders ? startView : "companies");
+showView(startView in loaders ? startView : "session");
 api("/api/status").then((s) => { updateFoot(s); if (s.job_running) pollStatus(); }).catch(() => {});

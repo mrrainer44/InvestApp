@@ -1,0 +1,189 @@
+"""Podsumowanie sesji: co się dziś wydarzyło na GPW i NewConnect.
+
+  - szerokość rynku: ile spółek rośnie / spada, osobno dla płynnych (obrót >= próg), i jaki obrót stoi za każdą stroną,
+  - najwięksi zwycięzcy i przegrani wśród płynnych spółek - w dniu odcięcia dywidendy ze zmianą skorygowaną o dywidendę,
+  - skoki obrotu względem średniej z 20 sesji,
+  - nowe transakcje insiderów (MAR) i zmiany znacznych pakietów (art. 69) od zamknięcia poprzedniej sesji,
+  - ważne komunikaty (wezwania, skup akcji własnych),
+  - "Moje spółki" (spółki zaznaczone w wybranej własnej kolumnie) z listą sygnałów do sprawdzenia.
+
+Sygnały to podpowiedzi, co warto obejrzeć - nie rekomendacje kupna ani sprzedaży.
+"""
+import statistics
+
+from . import pressure
+
+IMPORTANT = ("art69", "mar", "wezwanie", "skup", "wz_lista")
+
+
+def _dates(con):
+    rows = [r[0] for r in con.execute("SELECT DISTINCT date FROM quotes ORDER BY date DESC LIMIT 2")]
+    return (rows[0] if rows else None), (rows[1] if len(rows) > 1 else None)
+
+
+def _avg_turnover(con, day, sessions=20):
+    """Średni obrót z `sessions` poprzednich sesji (dni bez handlu spółką liczone jako 0)."""
+    days = [r[0] for r in con.execute(
+        "SELECT date FROM ohlc WHERE date<? GROUP BY date HAVING COUNT(*) > 100 ORDER BY date DESC LIMIT ?",
+        (day, sessions))]
+    if not days:
+        return {}
+    q = ",".join("?" * len(days))
+    return {r[0]: r[1] / len(days) for r in con.execute(
+        f"SELECT ticker, SUM(turnover) FROM ohlc WHERE date IN ({q}) GROUP BY ticker", days)}
+
+
+def _breadth(rows):
+    up = [r for r in rows if r["traded"] and (r["chg"] or 0) > 0]
+    down = [r for r in rows if r["traded"] and (r["chg"] or 0) < 0]
+    flat = [r for r in rows if r["traded"] and not r["chg"]]
+    chg = [r["chg"] for r in rows if r["traded"] and r["chg"] is not None]
+    return {"up": len(up), "down": len(down), "flat": len(flat), "none": sum(1 for r in rows if not r["traded"]),
+            "up_turnover": sum(r["turnover"] or 0 for r in up), "down_turnover": sum(r["turnover"] or 0 for r in down),
+            "median_change": statistics.median(chg) if chg else None}
+
+
+def summary(con, min_turnover=100_000, market="", watch_key=None, top=12):
+    day, prev = _dates(con)
+    if not day:
+        return {"date": None}
+    as_of = con.execute("SELECT MAX(finished) FROM runs WHERE status='ok' AND kind IN ('daily','weekly','quick')"
+                        ).fetchone()[0]
+    avg = _avg_turnover(con, day)
+    cmf = pressure.all_cmf(con)
+    exdiv = {}
+    if prev:  # ostatni dzień z prawem do dywidendy = poprzednia sesja -> dziś kurs bez dywidendy
+        for r in con.execute("SELECT ticker, SUM(dps) dps FROM dividends WHERE last_day=? AND dps>0 GROUP BY ticker",
+                             (prev,)):
+            exdiv[r["ticker"]] = r["dps"]
+
+    rows = []
+    for r in con.execute(
+            "SELECT q.ticker, q.close, q.change_pct, q.volume, q.turnover, c.market, c.short_name, c.full_name, "
+            "c.shares FROM quotes q JOIN companies c ON c.ticker=q.ticker WHERE q.date=?", (day,)):
+        if market and r["market"] != market:
+            continue
+        chg, close = r["change_pct"], r["close"]
+        x = {"ticker": r["ticker"], "name": r["full_name"] or r["short_name"], "market": r["market"],
+             "close": close, "chg": chg, "turnover": r["turnover"], "traded": bool(r["volume"]),
+             "avg20": avg.get(r["ticker"]), "cmf21": (cmf.get(r["ticker"]) or {}).get(21),
+             "mcap": close * r["shares"] if close and r["shares"] else None}
+        x["ratio"] = (x["turnover"] / x["avg20"]) if x["avg20"] and x["turnover"] else None
+        dps = exdiv.get(r["ticker"])
+        if dps and close and chg is not None and chg > -100:
+            prev_close = close / (1 + chg / 100)
+            x["exdiv"] = {"dps": dps, "pct": dps / prev_close * 100,
+                          "adj_chg": (close + dps) / prev_close * 100 - 100}
+        x["chg_eff"] = x["exdiv"]["adj_chg"] if "exdiv" in x else chg
+        rows.append(x)
+    by = {x["ticker"]: x for x in rows}
+    liquid = [x for x in rows if x["traded"] and (x["turnover"] or 0) >= min_turnover]
+
+    # komunikaty i zmiany stanu posiadania od zamknięcia poprzedniej sesji
+    since = f"{prev} 17:00" if prev else day
+    espi_rows = [dict(r) for r in con.execute(
+        "SELECT id, ticker, ts, title, category FROM espi WHERE ts>? ORDER BY ts DESC", (since,))]
+    if market:
+        espi_rows = [e for e in espi_rows if e["ticker"] in by]
+    counts = {}
+    for e in espi_rows:
+        counts[e["category"]] = counts.get(e["category"], 0) + 1
+    holders = [dict(r) for r in con.execute(
+        "SELECT c.ticker, c.investor, c.delta, c.price, c.value, c.source, c.date, c.shares_after, c.note, e.ts, e.title "
+        "FROM changes c JOIN espi e ON e.id=c.espi_id/10 WHERE c.source IN ('mar','art69') AND c.excluded=0 AND e.ts>? "
+        "ORDER BY ABS(COALESCE(c.value, 0)) DESC", (since,))]
+    if market:
+        holders = [h for h in holders if h["ticker"] in by]
+    for h in holders:
+        q = by.get(h["ticker"])
+        h["chg"] = q["chg_eff"] if q else None
+        h["name"] = q["name"] if q else None
+    # przesunięcia akcji między powiązanymi podmiotami (np. do fundacji rodzinnej): kupno i sprzedaż znoszą się
+    gross, net = {}, {}
+    for h in holders:
+        gross[h["ticker"]] = gross.get(h["ticker"], 0) + abs(h["delta"])
+        net[h["ticker"]] = net.get(h["ticker"], 0) + h["delta"]
+    transfer = {t for t in gross if len([h for h in holders if h["ticker"] == t]) > 1
+                and abs(net[t]) <= 0.05 * gross[t] / 2}
+    for h in holders:
+        h["transfer"] = h["ticker"] in transfer
+
+    events = {}
+    for t in transfer:
+        events.setdefault(t, []).append({"kind": "transfer", "text": "Przesunięcie akcji między powiązanymi podmiotami "
+                                                                     "(np. do fundacji rodzinnej) - saldo ok. zera"})
+    for h in holders:
+        if h["transfer"]:
+            continue
+        who = "Insider" if h["source"] == "mar" else "Akcjonariusz (art. 69)"
+        verb = "kupił" if h["delta"] > 0 else "sprzedał"
+        val = f", ok. {_money(abs(h['value']))}" if h["value"] else ""
+        events.setdefault(h["ticker"], []).append(
+            {"kind": "insider_buy" if h["delta"] > 0 else "insider_sell",
+             "text": f"{who}: {h['investor']} {verb} {abs(h['delta']):,.0f} akcji{val}".replace(",", " ")})
+    for e in espi_rows:
+        if e["category"] in ("wezwanie", "skup"):
+            events.setdefault(e["ticker"], []).append(
+                {"kind": e["category"], "text": ("Wezwanie: " if e["category"] == "wezwanie" else "Skup akcji: ")
+                 + _subject(e["title"])})
+
+    def signals(x):
+        s = list(events.get(x["ticker"], []))
+        if "exdiv" in x:
+            d = x["exdiv"]
+            s.append({"kind": "exdiv", "text": f"Dzień odcięcia dywidendy {d['dps']:.2f} zł ({d['pct']:.1f}%) - "
+                                               f"po doliczeniu dywidendy zmiana {d['adj_chg']:+.2f}%"})
+        c, ratio = x["chg_eff"], x["ratio"]
+        if c is not None and ratio and ratio >= 2 and abs(c) >= 5:
+            s.append({"kind": "move_down" if c < 0 else "move_up",
+                      "text": f"{'Spadek' if c < 0 else 'Wzrost'} {c:+.1f}% przy obrocie {ratio:.1f}x średniej"})
+        elif ratio and ratio >= 3 and (x["turnover"] or 0) >= 20_000:
+            s.append({"kind": "volume", "text": f"Obrót {ratio:.1f}x średniej z 20 sesji"})
+        if x["cmf21"] is not None and abs(x["cmf21"]) >= 0.25:
+            s.append({"kind": "press_up" if x["cmf21"] > 0 else "press_down",
+                      "text": ("Akumulacja" if x["cmf21"] > 0 else "Dystrybucja")
+                      + f" w ostatnich 30 dniach (presja {x['cmf21']:+.2f})"})
+        return s
+
+    def pub(x):
+        return {k: x.get(k) for k in ("ticker", "name", "market", "close", "chg", "chg_eff", "turnover", "avg20",
+                                      "ratio", "cmf21", "exdiv", "mcap")} | {"signals": signals(x)}
+
+    movers = sorted((x for x in liquid if x["chg_eff"] is not None), key=lambda x: x["chg_eff"])
+    spikes = sorted((x for x in liquid if x["ratio"] and x["ratio"] >= 2), key=lambda x: -x["ratio"])
+
+    watch = None
+    if watch_key:
+        col = con.execute("SELECT key, label, type FROM custom_columns WHERE key=?", (watch_key,)).fetchone()
+        if col:
+            tick = [r[0] for r in con.execute("SELECT ticker FROM custom_values WHERE key=? AND value NOT IN "
+                                              "('', 'false', '0', 'null')", (watch_key,))]
+            watch = {"key": col["key"], "label": col["label"],
+                     "rows": sorted((pub(by[t]) for t in tick if t in by), key=lambda x: -len(x["signals"]))}
+
+    return {
+        "date": day, "prev_date": prev, "as_of": as_of, "since": since, "min_turnover": min_turnover, "market": market,
+        "breadth": {"all": _breadth(rows), "liquid": _breadth(liquid)},
+        "gainers": [pub(x) for x in reversed(movers[-top:]) if (x["chg_eff"] or 0) > 0],
+        "losers": [pub(x) for x in movers[:top] if (x["chg_eff"] or 0) < 0],
+        "spikes": [pub(x) for x in spikes[:top]],
+        "exdiv": [pub(x) for x in rows if "exdiv" in x],
+        "holders": holders[:40],
+        "espi": {"counts": counts, "total": len(espi_rows),
+                 "important": [e for e in espi_rows if e["category"] in ("wezwanie", "skup", "wz_lista")][:30]},
+        "watch": watch,
+        "watch_columns": [dict(r) for r in con.execute("SELECT key, label, type FROM custom_columns ORDER BY label")],
+    }
+
+
+def _subject(title):
+    return title.split(")", 1)[1].strip() if ")" in (title or "") else (title or "")
+
+
+def _money(v):
+    if v >= 1e6:
+        return f"{v / 1e6:.1f} mln zł".replace(".", ",")
+    if v >= 1e3:
+        return f"{v / 1e3:.0f} tys. zł"
+    return f"{v:.0f} zł"
+

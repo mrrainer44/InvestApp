@@ -216,6 +216,31 @@ def parse_price_history(html):
     return []
 
 
+def parse_price_history_full(html):
+    """Archiwum notowań z pełnymi danymi sesji: Data, Otwarcie, Max, Min, Zamknięcie, Wolumen, Obrót (zł)."""
+    soup = _soup(html)
+    names = {"data": "date", "otwarcie": "open", "max": "high", "min": "low", "wolumen": "volume", "obrót": "turnover"}
+    for t in soup.find_all("table"):
+        first = t.find("tr")
+        if not first:
+            continue
+        hdr = [x.get_text(strip=True).lower() for x in first.find_all(["th", "td"])]
+        idx = {names[h]: i for i, h in enumerate(hdr) if h in names}
+        idx.update({"close": i for i, h in enumerate(hdr) if h.startswith("zamkn")})
+        if not {"date", "high", "low", "close", "turnover"} <= idx.keys():
+            continue
+        out = []
+        for tr in t.find_all("tr")[1:]:
+            c = [x.get_text(strip=True) for x in tr.find_all("td")]
+            if len(c) <= max(idx.values()):
+                continue
+            row = {k: (any_date(c[i]) if k == "date" else num(c[i])) for k, i in idx.items()}
+            if row["date"] and row["close"] is not None:
+                out.append({"open": None, "volume": None, **row})
+        return out
+    return []
+
+
 # ---- pobieranie ----
 
 def fetch_quotes(market):
@@ -252,6 +277,12 @@ def fetch_espi_page(page):
 def fetch_article(url):
     html = http.get(url)
     return parse_article(html) if html else None
+
+
+def fetch_price_history_full(slug):
+    """Ok. 50 ostatnich sesji spółki (tylko pierwsza strona - robots.txt)."""
+    html = http.get(f"/notowania-historyczne/{slug}")
+    return parse_price_history_full(html) if html else []
 
 
 def fetch_price_history(slug, page=1):

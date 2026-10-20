@@ -469,6 +469,22 @@ def test_pipeline():
     assert cl.get("/api/status").get_json()["counts"]["companies"] == 7
     assert any(r["ticker"] == "SHO" for r in rows)  # wycofana spółka widoczna w widoku Spółki
     assert cl.post("/api/aliases", json={"alias_norm": out["investor_norm"], "canonical": "Hegen Invest"}).status_code == 200
+
+    # podsumowanie sesji: struktura, "Moje spółki" z własnej kolumny Tak/Nie
+    ses = cl.get(f"/api/session?min=0&watch={r['key']}").get_json()
+    assert ses["date"] and set(ses["breadth"]["all"]) >= {"up", "down", "flat", "none", "median_change"}
+    assert ses["watch"]["label"] == "Kupiłem" and [x["ticker"] for x in ses["watch"]["rows"]] == ["PKO"]
+    assert "gainers" in ses and "holders" in ses and ses["espi"]["total"] >= 0
+    # dywidendy: dzień odcięcia, wypłata jednorazowa (ponad 2x mediany innych), okno 12 mies. po dniu odcięcia
+    from datetime import date as _d
+    mk = lambda last, dps: {"last_day": last, "pay_day": "", "dps": dps}  # noqa: E731
+    vot = [mk("2025-05-28", 3.33), mk("2025-10-17", 1.67), mk("2025-12-12", 1.67), mk("2026-05-14", 5.0),
+           mk("2026-10-19", 2.5)]
+    dv = app_mod._dividend_split(vot, _d(2026, 10, 20), "2025-10-20", "2026-10-19")
+    assert abs(dv["dps12"] - 9.17) < 1e-9 and dv["oneoff12"] == 5.0 and dv["exdiv_today"] == 2.5
+    # szybkie pobieranie w trakcie sesji
+    st_q, stats_q = collect.run(quick=True)
+    assert st_q == "ok" and stats_q["quotes_GPW"] == 5 and "ratio_cz_GPW" not in stats_q, stats_q
     # analizy fundamentalne: przypisanie po tickerze, po nazwie spółki, plik nieprzypisany
     from gpwt import analyses
     analyses.AF_DIR = TMP / "analyses"

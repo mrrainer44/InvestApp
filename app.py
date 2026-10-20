@@ -3,13 +3,14 @@ import hmac
 import ipaddress
 import json
 import re
+import statistics
 import threading
 import webbrowser
 from datetime import date, datetime, timedelta
 
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
-from gpwt import analyses, collect, config, db, flows, pressure
+from gpwt import analyses, collect, config, db, flows, pressure, session
 from gpwt.config import ROOT, SERVER_HOST, SERVER_PORT
 from gpwt.util import ascii_fold, norm_investor
 
@@ -60,6 +61,25 @@ def index():
 
 # ---------------- lista spółek ----------------
 
+def _dividend_split(dl, today, y_ago, prev_session):
+    """Dywidendy spółki: wypłacone w 12 mies. (po dniu odcięcia = dzień po ostatnim dniu z prawem), zapowiedziane,
+    podział na regularne i jednorazowe. Wypłata jest jednorazowa, gdy jest ponad 2x wyższa od mediany pozostałych
+    wypłat spółki (potrzebne co najmniej 2 inne wypłaty w historii)."""
+    t = today.isoformat()
+    dated = [d for d in dl if (d["dps"] or 0) > 0 and (d["last_day"] or d["pay_day"])]
+    paid12 = [d for d in dated if y_ago < (d["last_day"] or d["pay_day"]) < t]
+    upcoming = [d for d in dl if (d["last_day"] or "") >= t]
+    oneoff = 0.0
+    for d in paid12:
+        others = [o["dps"] for o in dated if o is not d]
+        if len(others) >= 2 and d["dps"] > 2 * statistics.median(others):
+            oneoff += d["dps"]
+    dps12 = sum(d["dps"] for d in paid12) if paid12 else None
+    ex = next((d for d in dl if prev_session and d["last_day"] == prev_session and (d["dps"] or 0) > 0), None)
+    return {"paid12": paid12, "upcoming": upcoming, "dps12": dps12, "oneoff12": oneoff,
+            "regular12": (dps12 or 0) - oneoff, "exdiv_today": ex["dps"] if ex else None}
+
+
 @app.get("/api/companies")
 def companies():
     c = con()
@@ -95,6 +115,8 @@ def companies():
         custom.setdefault(r["ticker"], {})[f"c_{r['key']}"] = r["value"]
     af = analyses.scan(c)
     press = pressure.all_cmf(c)
+    ds = [r[0] for r in c.execute("SELECT DISTINCT date FROM quotes ORDER BY date DESC LIMIT 2")]
+    prev_session = ds[1] if len(ds) > 1 else None
 
     out = []
     for co in c.execute("SELECT * FROM companies ORDER BY ticker"):
@@ -103,10 +125,9 @@ def companies():
         price = q["close"] if q else None
         rr, ra = rets.get(t), rat.get(t)
         dl = divs.get(t, [])
-        paid12 = [d for d in dl if (d["pay_day"] or d["last_day"] or "") >= y_ago
-                  and (d["last_day"] or "9") <= today.isoformat()]
-        upcoming = [d for d in dl if (d["last_day"] or "") >= today.isoformat()]
-        dps12 = sum(d["dps"] for d in paid12) if paid12 else None
+        dv = _dividend_split(dl, today, y_ago, prev_session)
+        paid12, upcoming, dps12 = dv["paid12"], dv["upcoming"], dv["dps12"]
+        eps = price / ra["cz"] if price and ra and ra["cz"] and ra["cz"] > 0 else None
         hs = holders.get(t, [])
         big = [h for h in hs if (h["pct"] or 0) >= 5]
         f30 = flows30.get(t)
@@ -127,6 +148,10 @@ def companies():
             "div_has": bool(paid12 or upcoming),
             "div_dps12": dps12,
             "div_yield": (dps12 / price * 100) if dps12 and price else None,
+            "div_yield_regular": (dv["regular12"] / price * 100) if dps12 and price else None,
+            "div_oneoff12": dv["oneoff12"] or None,
+            "div_payout": (dps12 / eps * 100) if dps12 and eps else None,
+            "exdiv_today": dv["exdiv_today"],
             "div_next_day": upcoming[0]["last_day"] if upcoming else None,
             "div_next_dps": upcoming[0]["dps"] if upcoming else None,
             "top_holders": "; ".join(f"{h['holder']} {h['pct']:.1f}%" for h in big[:3] if h["pct"] is not None),
@@ -383,6 +408,24 @@ def set_espi_ticker(eid):
     return jsonify({"ok": True})
 
 
+# ---------------- podsumowanie sesji ----------------
+
+@app.get("/api/session")
+def session_summary():
+    c = con()
+    pref = c.execute("SELECT value FROM settings WHERE key='ui_session'").fetchone()
+    pref = json.loads(pref["value"]) if pref and pref["value"] else {}
+    a = request.args
+    try:
+        min_t = float(a.get("min", pref.get("min", 100_000)))
+    except ValueError:
+        min_t = 100_000
+    r = session.summary(c, min_turnover=min_t, market=a.get("market", pref.get("market", "")),
+                        watch_key=a.get("watch", pref.get("watch")) or None)
+    c.close()
+    return jsonify(r)
+
+
 # ---------------- status i ręczne uruchomienie ----------------
 
 @app.get("/api/status")
@@ -397,7 +440,8 @@ def status():
 
 @app.post("/api/collect")
 def run_collect():
-    weekly = bool((request.get_json(silent=True) or {}).get("weekly"))
+    body = request.get_json(silent=True) or {}
+    weekly, quick = bool(body.get("weekly")), bool(body.get("quick"))
     with _job_lock:  # serwer wielowątkowy: dwa kliknięcia naraz nie mogą uruchomić dwóch pobierań
         if _job["running"]:
             return jsonify({"started": False, "msg": "Zbieranie już trwa"})
@@ -405,7 +449,7 @@ def run_collect():
 
     def work():
         try:
-            collect.run(weekly=weekly)
+            collect.run(weekly=weekly, quick=quick)
         finally:
             _job["running"] = False
 

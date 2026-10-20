@@ -42,9 +42,9 @@ sudo git clone https://github.com/mrrainer44/InvestApp.git /opt/gpw-tracker
 sudo chown -R gpwtracker: /opt/gpw-tracker
 sudo -u gpwtracker /opt/gpw-tracker/install.sh
 sudo install -m 600 /opt/gpw-tracker/deploy/gpw-tracker.env.example /etc/gpw-tracker.env   # ustaw hasło!
-sudo cp /opt/gpw-tracker/deploy/gpw-tracker*.service /opt/gpw-tracker/deploy/gpw-tracker-collect.timer /etc/systemd/system/
+sudo cp /opt/gpw-tracker/deploy/gpw-tracker*.service /opt/gpw-tracker/deploy/gpw-tracker-{collect,quick}.timer /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl enable --now gpw-tracker.service gpw-tracker-collect.timer
+sudo systemctl enable --now gpw-tracker.service gpw-tracker-collect.timer gpw-tracker-quick.timer
 sudo -u gpwtracker /opt/gpw-tracker/pierwsze_pobranie.sh
 ```
 Aplikacja (gunicorn) słucha na `127.0.0.1:8050`. Na świat wystawia ją reverse proxy z certyfikatem, np. Caddy (`/etc/caddy/Caddyfile`):
@@ -53,7 +53,7 @@ twoja-domena.pl {
     reverse_proxy 127.0.0.1:8050
 }
 ```
-Zmienne w `/etc/gpw-tracker.env`: `GPWT_USER`, `GPWT_PASSWORD`, `GPWT_BIND`, `TZ=Europe/Warsaw` (daty sesji liczone są wg czasu polskiego). Logi: `journalctl -u gpw-tracker` i `logs/collect.log`.
+Pobieranie: pełne codziennie o 18:30 (`gpw-tracker-collect.timer`) i szybkie w dni sesyjne o 10:00, 13:00 i 17:10 (`gpw-tracker-quick.timer`: notowania i nowe komunikaty do zakładki „Sesja”). Zmienne w `/etc/gpw-tracker.env`: `GPWT_USER`, `GPWT_PASSWORD`, `GPWT_BIND`, `TZ=Europe/Warsaw` (daty sesji liczone są wg czasu polskiego). Logi: `journalctl -u gpw-tracker` i `logs/collect.log`.
 
 **Analizy fundamentalne z OneDrive (opcjonalnie):** pliki z wybranego folderu OneDrive trafiają co 15 minut do `data/analyses` (rclone sync, `deploy/gpw-tracker-af-sync.*`). Aplikacja przypisuje je do spółki po tickerze w nazwie pliku (np. `CDR_analiza_2026-10-19.pdf`) albo po nazwie spółki. Dla każdej spółki widać je w kolumnie „AF” i w panelu spółki. Do synchronizacji użyj osobnego remote'a rclone z uprawnieniami tylko do odczytu (`access_scopes = Files.Read Files.Read.All Sites.Read.All offline_access`) w `/var/lib/gpw-tracker/rclone.conf`, a ścieżkę ustaw w `GPWT_AF_REMOTE` w `/etc/gpw-tracker.env`.
 

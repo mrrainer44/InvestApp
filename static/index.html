@@ -12,6 +12,7 @@
 <body>
 <nav class="rail" aria-label="Widoki">
   <div class="brand">GPW Tracker<small>GPW i NewConnect</small></div>
+  <button data-view="session">Sesja</button>
   <button data-view="companies" aria-current="page">Spółki</button>
   <button data-view="investors">Inwestorzy</button>
   <button data-view="changes">Zmiany stanu posiadania</button>
@@ -21,7 +22,30 @@
 </nav>
 
 <main>
-  <section id="view-companies">
+  <section id="view-session" hidden>
+    <h1>Sesja <span id="sesDate" class="dim"></span></h1>
+    <p class="lead">Co się wydarzyło na dzisiejszej sesji: szerokość rynku, najwięksi zwycięzcy i przegrani wśród płynnych spółek, skoki obrotu, nowe transakcje insiderów i dużych akcjonariuszy oraz sygnały dla Twoich spółek. Sygnały podpowiadają, co warto sprawdzić – nie są rekomendacją kupna ani sprzedaży.</p>
+    <div class="toolbar">
+      <div class="seg" role="group" aria-label="Rynek" id="sesMkt">
+        <button data-smkt="" aria-pressed="true">Wszystkie</button>
+        <button data-smkt="GPW" aria-pressed="false">GPW</button>
+        <button data-smkt="NC" aria-pressed="false">NewConnect</button>
+      </div>
+      <label class="dim">Płynne spółki: obrót od
+        <select id="sesMin">
+          <option value="20000">20 tys. zł</option><option value="50000">50 tys. zł</option>
+          <option value="100000">100 tys. zł</option><option value="500000">500 tys. zł</option>
+          <option value="1000000">1 mln zł</option><option value="5000000">5 mln zł</option>
+        </select></label>
+      <label class="dim">Moje spółki z kolumny <select id="sesWatch"></select></label>
+      <span class="grow"></span>
+      <span id="sesAsOf" class="dim"></span>
+      <button class="btn primary" id="sesRefresh">Odśwież teraz</button>
+    </div>
+    <div id="sesBody"><p class="dim">Wczytuję…</p></div>
+  </section>
+
+  <section id="view-companies" hidden>
     <h1>Spółki</h1>
     <p class="lead">Kurs, wycena, dywidendy i ruchy dużych inwestorów w jednej tabeli. Kolumny przeciągasz, sortujesz kliknięciem w nagłówek, a w swoich kolumnach wpisujesz wartości bezpośrednio w komórce.</p>
     <div class="toolbar">

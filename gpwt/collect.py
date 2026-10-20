@@ -55,7 +55,8 @@ def now():
 
 # ---------------- notowania, stopy zwrotu, wskaźniki, dywidendy ----------------
 
-def collect_market_tables(con, stats):
+def collect_market_tables(con, stats, quick=False):
+    """quick: tylko notowania i stopy zwrotu (pobieranie w trakcie sesji), bez wskaźników i dywidend."""
     td = trading_date()
     for mkt, label in MARKETS.items():
         log.info("[1/4] %s: notowania, stopy zwrotu, wskaźniki, dywidendy...", label)
@@ -83,12 +84,10 @@ def collect_market_tables(con, stats):
                                  r["volume"], r["turnover"]))
         con.commit()
 
-        ret = br.fetch_returns(mkt)
-        stats[f"returns_{label}"] = len(ret)
-        for r in ret:
-            con.execute("INSERT OR REPLACE INTO returns VALUES(?,?,?,?,?,?,?,?,?,?)",
-                        (r["ticker"], r["r1w"], r["r1m"], r["r3m"], r["r6m"], r["ytd"], r["r12m"],
-                         r["r24m"], r["r36m"], td))
+        stats[f"returns_{label}"] = _store_returns(con, br.fetch_returns(mkt), td)
+        if quick:
+            con.commit()
+            continue
 
         for code, col in RATIOS.items():
             rr = br.fetch_ratio(mkt, code)
@@ -100,7 +99,9 @@ def collect_market_tables(con, stats):
                             (r["value"], r["report"], td, r["ticker"]))
 
         y = date.today().year
-        for year in (y - 1, y, y + 1):
+        # starsze lata raz (historia wypłat do odróżnienia dywidendy regularnej od jednorazowej)
+        hist = () if con.execute("SELECT 1 FROM settings WHERE key='div_history'").fetchone() else range(y - 7, y - 1)
+        for year in (*hist, y - 1, y, y + 1):
             dv = br.fetch_dividends(mkt, year)
             stats[f"div_{year}_{label}"] = len(dv)
             for r in dv:
@@ -110,6 +111,57 @@ def collect_market_tables(con, stats):
                             (r["ticker"], r["year_for"], r["wza"], r["last_day"] or "", r["pay_day"] or "",
                              r["dps"], r["status"]))
         con.commit()
+    con.execute("INSERT OR REPLACE INTO settings VALUES('div_history', ?)", (td,))
+    con.commit()
+
+
+def _store_returns(con, ret, td):
+    for r in ret:
+        con.execute("INSERT OR REPLACE INTO returns VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (r["ticker"], r["r1w"], r["r1m"], r["r3m"], r["r6m"], r["ytd"], r["r12m"],
+                     r["r24m"], r["r36m"], td))
+    return len(ret)
+
+
+def backfill_nc_history(con, stats):
+    """NewConnect nie ma archiwum sesji jak gpw.pl - bierzemy ok. 50 ostatnich sesji spółki z pierwszej strony
+    historii notowań Biznesradar (dalszych stron robots.txt zabrania). Raz na spółkę, potem historia rośnie
+    z codziennych notowań - wystarcza do presji kupujących z 30 dni."""
+    done = set(json.loads((con.execute("SELECT value FROM settings WHERE key='nc_history'").fetchone() or ["[]"])[0]))
+    todo = [r for r in con.execute("SELECT ticker, slug FROM companies WHERE market='NC' AND slug IS NOT NULL "
+                                   "ORDER BY ticker").fetchall() if r["ticker"] not in done]
+    if not todo:
+        return
+    log.info("[1/4] Historia notowań NewConnect (do presji kupujących): %s spółek", len(todo))
+    added = 0
+    for i, r in enumerate(todo, 1):
+        rows = br.fetch_price_history_full(r["slug"])
+        batch = [(r["ticker"], x["date"], x["open"], x["high"], x["low"], x["close"], x["volume"], x["turnover"])
+                 for x in rows if x["turnover"]]
+        if batch:
+            added += con.executemany("INSERT OR IGNORE INTO ohlc VALUES(?,?,?,?,?,?,?,?)", batch).rowcount
+        done.add(r["ticker"])
+        if i % 25 == 0 or i == len(todo):
+            con.execute("INSERT OR REPLACE INTO settings VALUES('nc_history', ?)", (json.dumps(sorted(done)),))
+            con.commit()
+            log.info("      NewConnect: %s/%s spółek", i, len(todo))
+    stats["nc_history_rows"] = added
+
+
+def _lock():
+    """Jedno pobieranie naraz (timer systemd i przycisk w aplikacji mogą trafić w ten sam moment).
+    None = brak blokad w tym systemie (Windows), False = inne pobieranie trwa."""
+    try:
+        import fcntl
+    except ImportError:
+        return None
+    f = open(LOG_DIR / "collect.lock", "w")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        f.close()
+        return False
+    return f
 
 
 # ---------------- dopasowanie nazwy spółki z ESPI do tickera ----------------
@@ -428,12 +480,16 @@ def store_wz_snapshots(con):
 
 
 def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, ofe_only=False, ohlc_days=None,
-        bankier_only=False, reparse=False):
+        bankier_only=False, reparse=False, quick=False):
     setup_logging()
+    lock = _lock()
+    if lock is False:
+        log.warning("Inne pobieranie właśnie trwa - pomijam to uruchomienie")
+        return "busy", {}
     db.init()
     stats = {}
     con = db.connect()
-    kind = ("sesje" if ohlc_days else "reparse" if reparse else "bankier" if bankier_only else "ofe" if ofe_only else "backfill" if since
+    kind = ("quick" if quick else "sesje" if ohlc_days else "reparse" if reparse else "bankier" if bankier_only else "ofe" if ofe_only else "backfill" if since
             else ("weekly" if weekly else "daily"))
     run_id = con.execute("INSERT INTO runs(started, kind, status) VALUES(?,?,?)", (now(), kind, "running")).lastrowid
     con.commit()
@@ -447,6 +503,15 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
             stats.update(flows.rebuild_changes(con))
             stats.update(flows.fill_prices(con))
             return status, stats
+        if quick:  # w trakcie sesji: notowania i nowe komunikaty (ok. minuty)
+            collect_market_tables(con, stats, quick=True)
+            collect_espi(con, stats)
+            reclassify_other(con, stats)
+            fetch_espi_details(con, stats)
+            store_wz_snapshots(con)
+            stats.update(flows.rebuild_changes(con))
+            stats.update(flows.fill_prices(con))
+            return status, stats
         if bankier_only:  # tylko załączniki raportów z archiwum gpw.pl (jednorazowe uzupełnienie historii)
             fetch_bankier_attachments(con, stats)
             stats.update(flows.rebuild_changes(con))
@@ -455,6 +520,7 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
         if not since and not ofe_only:
             collect_market_tables(con, stats)
             pressure.backfill(con, 10, stats)  # uzupełnia sesje GPW z ostatnich dni, gdyby pobieranie wypadło
+            backfill_nc_history(con, stats)
         if not skip_espi and not ofe_only:
             collect_espi(con, stats, max_pages=max_pages or (500 if since else None), since=since)
             if since:
@@ -481,6 +547,8 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
                     (now(), status, json.dumps(stats, ensure_ascii=False), run_id))
         con.commit()
         con.close()
+        if lock:
+            lock.close()
     log.info("Koniec: %s %s", status, stats)
     return status, stats
 
@@ -502,8 +570,10 @@ if __name__ == "__main__":
                     help="tylko załączniki PDF raportów z archiwum gpw.pl/newconnect.pl - pobrane z Bankier.pl")
     ap.add_argument("--reparse", action="store_true",
                     help="ponownie odczytaj zapisane raporty art. 69 / MAR (po poprawce parsera) i przelicz zmiany")
+    ap.add_argument("--quick", action="store_true",
+                    help="szybkie pobranie w trakcie sesji: notowania, stopy zwrotu i nowe komunikaty")
     a = ap.parse_args()
     st, _ = run(weekly=a.weekly, limit=a.limit, skip_espi=a.skip_espi, since=a.since, max_pages=a.max_pages,
                 ofe_only=a.ofe, ohlc_days=a.ohlc_history, bankier_only=a.bankier,
-                reparse=a.reparse)
-    sys.exit(0 if st == "ok" else 1)
+                reparse=a.reparse, quick=a.quick)
+    sys.exit(0 if st in ("ok", "busy") else 1)
