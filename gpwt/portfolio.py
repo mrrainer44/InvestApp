@@ -92,7 +92,10 @@ def summary(con):
         "SELECT ticker, full_name, short_name, market FROM companies")}
     plans = {r["ticker"]: dict(r) for r in con.execute("SELECT * FROM plans")}
     avg = _avg_turnover(con, day) if day else {}
-    wig_now = index_close(con, "WIG", today)
+    wig_last = (con.execute("SELECT MAX(date) FROM index_ohlc WHERE name='WIG'").fetchone() or [None])[0]
+    # WIG z archiwum gpw.pl jest dostępny po sesji; starszy niż tydzień = brak danych (nie porównujemy z zerem)
+    fresh = wig_last and day and (date.fromisoformat(day) - date.fromisoformat(wig_last)).days <= 7
+    wig_now = index_close(con, "WIG", today) if fresh else None
     prev = _sessions_back(con, 1)
     since1 = f"{prev} 17:00" if prev else today
     since5 = f"{_sessions_back(con, 5) or today} 17:00"

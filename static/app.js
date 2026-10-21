@@ -871,8 +871,10 @@ const HORIZONS = ["krótki (dni–tygodnie)", "średni (miesiące)", "długi (1�
 const ALERT_LVL = { critical: "bad", warn: "warn", info: "neutral" };
 const signed = (v, d = 2, suf = "%") => v == null ? `<span class="dim">–</span>`
   : `<span class="${v > 0 ? "up" : v < 0 ? "down" : ""}">${v > 0 ? "+" : ""}${fmtNum(v, d)}${suf}</span>`;
+// kwoty portfela dokładnie (do złotówki), miliony skrótem
+const fmtPLN = (v) => v == null ? "" : Math.abs(v) >= 1e6 ? `${fmtNum(v / 1e6, 2)} mln zł` : `${fmtNum(v, 0)} zł`;
 const signedMoney = (v) => v == null ? `<span class="dim">–</span>`
-  : `<span class="${v > 0 ? "up" : v < 0 ? "down" : ""}">${v > 0 ? "+" : ""}${fmtMoney(v)} zł</span>`;
+  : `<span class="${v > 0 ? "up" : v < 0 ? "down" : ""}">${v > 0 ? "+" : ""}${fmtPLN(v)}</span>`;
 const tk = (t) => `<a class="tk" href="#" data-t="${esc(t)}">${esc(t)}</a>`;
 const dd = (d) => d ? d.split("-").reverse().join(".") : "";
 
@@ -896,14 +898,14 @@ function renderPortfolio(d) {
     return;
   }
   const kpi = `<div class="kpis pf">
-    <div class="kpi"><h3>Wartość portfela</h3><div class="big">${fmtMoney(T.value)} zł</div>
-      <p class="dim small">${T.n} ${T.n === 1 ? "spółka" : T.n < 5 ? "spółki" : "spółek"} · koszt zakupu ${fmtMoney(T.cost)} zł</p></div>
+    <div class="kpi"><h3>Wartość portfela</h3><div class="big">${fmtPLN(T.value)}</div>
+      <p class="dim small">${T.n} ${T.n === 1 ? "spółka" : T.n < 5 ? "spółki" : "spółek"} · koszt zakupu ${fmtPLN(T.cost)}</p></div>
     <div class="kpi"><h3>Wynik niezrealizowany</h3><div class="big">${signedMoney(T.pnl)}</div>
       <p class="dim small">${signed(T.pnl_pct)} od zakupu</p></div>
     <div class="kpi"><h3>Dziś</h3><div class="big">${signedMoney(T.today_pnl)}</div><p class="dim small">${signed(T.today_pct)}</p></div>
     <div class="kpi"><h3 title="Wynik portfela minus zmiana WIG od dat Twoich zakupów (ważona kosztem pozycji)">Na tle WIG</h3>
       <div class="big">${signed(T.vs_wig, 1, " pp")}</div>
-      <p class="dim small">WIG od Twoich zakupów: ${signed(T.wig_pct, 1)}${d.wig_date ? ` (stan na ${dd(d.wig_date)})` : ""}</p></div>
+      <p class="dim small">${T.wig_pct == null ? "Brak aktualnych notowań WIG – pojawią się po wieczornym pobraniu." : `WIG od Twoich zakupów: ${signed(T.wig_pct, 1)} (zamknięcie ${dd(d.wig_date)})`}</p></div>
     <div class="kpi"><h3>Zrealizowany wynik</h3><div class="big">${signedMoney(T.realized)}</div>
       <p class="dim small">ze sprzedanych pozycji</p></div>
   </div>`;
@@ -918,12 +920,12 @@ function renderPortfolio(d) {
     return `<tr class="pf-row" data-t="${esc(p.ticker)}">
       <td>${tk(p.ticker)} <span class="dim nm">${esc(p.name)}</span>${p.alerts.length ? ` <span class="sig ${p.alerts.some((a) => a.level === "critical") ? "down" : p.alerts.some((a) => a.level === "warn") ? "warn" : "info"}" title="${esc(p.alerts.map((a) => a.text).join("\n"))}">${p.alerts.length} ${p.alerts.length === 1 ? "alert" : "alerty"}</span>` : ""}</td>
       <td class="n">${fmtNum(p.qty, 0)}</td><td class="n">${fmtNum(p.avg_price, 2)}</td><td class="n">${fmtNum(p.close, 2)}</td>
-      <td class="n">${signed(p.chg)}</td><td class="n">${fmtMoney(p.value)}</td><td class="n">${p.weight == null ? "" : fmtNum(p.weight, 1) + "%"}</td>
+      <td class="n">${signed(p.chg)}</td><td class="n">${fmtPLN(p.value)}</td><td class="n">${p.weight == null ? "" : fmtNum(p.weight, 1) + "%"}</td>
       <td class="n">${signedMoney(p.pnl)}</td><td class="n">${signed(p.pnl_pct)}</td>
       <td class="n" title="Wynik pozycji minus zmiana WIG od daty zakupu (WIG ${p.wig_pct == null ? "–" : fmtNum(p.wig_pct, 1) + "%"})">${signed(p.vs_wig, 1, " pp")}</td>
       <td class="n">${pl.stop ? `${fmtNum(pl.stop, 2)} <span class="dim">(${toStop > 0 ? "+" : ""}${fmtNum(toStop, 1)}%)</span>` : `<span class="dim">–</span>`}</td>
       <td class="n">${pl.target ? `${fmtNum(pl.target, 2)} <span class="dim">(${toTarget > 0 ? "+" : ""}${fmtNum(toTarget, 1)}%)</span>` : `<span class="dim">–</span>`}</td>
-      <td class="n" title="Ile dni sprzedawałbyś całą pozycję, biorąc 20% średniego dziennego obrotu">${p.exit_days == null ? `<span class="dim">–</span>` : fmtNum(p.exit_days, 1)}</td>
+      <td class="n" title="Ile dni sprzedawałbyś całą pozycję, biorąc 20% średniego dziennego obrotu">${p.exit_days == null ? `<span class="dim">–</span>` : p.exit_days < 0.1 ? "<0,1" : fmtNum(p.exit_days, 1)}</td>
       <td class="act"><button class="btn sm" data-pf="plan">Plan</button><button class="btn sm" data-pf="buy">Dokup</button><button class="btn sm" data-pf="sell">Sprzedaj</button></td>
     </tr>
     <tr class="pf-detail" hidden data-t="${esc(p.ticker)}"><td colspan="14">${planBlock(p)}</td></tr>`;
