@@ -23,6 +23,16 @@ def _dates(con):
     return (rows[0] if rows else None), (rows[1] if len(rows) > 1 else None)
 
 
+def session_days(con, n, before=None):
+    """n ostatnich dni sesyjnych (z archiwum notowań - tabela quotes zaczyna się dopiero od startu aplikacji)."""
+    q = "SELECT date FROM ohlc " + ("WHERE date<? " if before else "") +         "GROUP BY date HAVING COUNT(*) > 100 ORDER BY date DESC LIMIT ?"
+    days = [r[0] for r in con.execute(q, (before, n) if before else (n,))]
+    for r in con.execute("SELECT DISTINCT date FROM quotes ORDER BY date DESC LIMIT ?", (n,)):  # dzisiejsza sesja w toku
+        if r[0] not in days and (not before or r[0] < before):
+            days.append(r[0])
+    return sorted(days, reverse=True)[:n]
+
+
 def _avg_turnover(con, day, sessions=20):
     """Średni obrót z `sessions` poprzednich sesji (dni bez handlu spółką liczone jako 0)."""
     days = [r[0] for r in con.execute(
@@ -91,7 +101,7 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc
     counts = {}
     for e in espi_rows:
         counts[e["category"]] = counts.get(e["category"], 0) + 1
-    ds = [r[0] for r in con.execute("SELECT DISTINCT date FROM quotes ORDER BY date DESC LIMIT ?", (insider_sessions + 1,))]
+    ds = session_days(con, insider_sessions + 1)
     since_h = f"{ds[-1]} 17:00" if len(ds) > insider_sessions else since
     holders = [dict(r) for r in con.execute(
         "SELECT c.ticker, c.investor, c.investor_norm, c.delta, c.price, c.value, c.source, c.date, c.shares_after, "

@@ -309,7 +309,7 @@ ul.alerts li.al-critical { font-weight: 600; }
 .pf-table td.act { white-space: nowrap; text-align: right; }
 .pf-detail > td { background: var(--paper); padding: 12px 14px !important; }
 .btn.sm { padding: 2px 9px; font-size: 12.5px; margin-left: 4px; }
-.plan { display: grid; gap: 10px; font-family: "IBM Plex Sans", sans-serif; font-size: 14px; margin-bottom: 10px; }
+.plan { display: grid; gap: 10px; max-width: 860px; font-family: "IBM Plex Sans", sans-serif; font-size: 14px; margin-bottom: 10px; }
 .plan .dim { font-size: 12px; }
 .plan-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
 .stable.lots { max-width: 560px; }

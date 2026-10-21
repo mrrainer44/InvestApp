@@ -10,7 +10,7 @@ Wynik liczony od kursu z ostatniego pobrania (w trakcie sesji - bieżącego), po
 from datetime import date, datetime, timedelta
 
 from .pressure import index_close
-from .session import _avg_turnover, _subject
+from .session import _avg_turnover, _subject, session_days
 
 PLAN_FIELDS = ("thesis", "stop", "target", "horizon", "review", "notes")
 EXIT_SHARE = 0.2  # przy wyjściu realnie da się sprzedać ok. 20% dziennego obrotu bez mocnego ruchu kursu
@@ -75,7 +75,7 @@ def sell(con, ticker, qty, price, day=None, fees=0):
 
 
 def _sessions_back(con, n):
-    ds = [r[0] for r in con.execute("SELECT DISTINCT date FROM quotes ORDER BY date DESC LIMIT ?", (n + 1,))]
+    ds = session_days(con, n + 1)
     return ds[-1] if ds else None
 
 
