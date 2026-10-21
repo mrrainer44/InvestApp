@@ -91,8 +91,9 @@ def events(con, days=14, start=None):
                          "AND ts>=?", ((today - timedelta(days=75)).isoformat(),)):
         d = (json.loads(r["parsed"] or "{}").get("meeting") or "")
         if t0 <= d <= t1:
-            nwz = "Nadzwyczajne" if "nadzwyczajn" in r["title"].lower() or "extraordinary" in r["title"].lower() else "Walne"
-            add(d, "wz", f"{nwz} Walne Zgromadzenie", r["ticker"], espi.split_title(r["title"])[1], "ESPI/EBI")
+            tl = r["title"].lower()
+            kind = "Nadzwyczajne " if "nadzwyczajn" in tl or "extraordinary" in tl else                 "Zwyczajne " if "zwyczajn" in tl or "annual" in tl else ""
+            add(d, "wz", f"{kind}Walne Zgromadzenie", r["ticker"], espi.split_title(r["title"])[1], "ESPI/EBI")
 
     # wezwania: zapisy
     for r in con.execute("SELECT ticker, ts, title, parsed FROM espi WHERE category='wezwanie' AND fetched=1 AND ts>=?",
