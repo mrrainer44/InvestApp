@@ -46,6 +46,12 @@ CREATE TABLE IF NOT EXISTS ohlc(
 CREATE TABLE IF NOT EXISTS index_ohlc(
   name TEXT, date TEXT, open REAL, high REAL, low REAL, close REAL, turnover REAL, PRIMARY KEY(name, date)
 );
+CREATE TABLE IF NOT EXISTS market_live(
+  key TEXT PRIMARY KEY, value REAL, change_pct REAL, ts TEXT, updated TEXT
+);
+CREATE TABLE IF NOT EXISTS macro_daily(
+  key TEXT, date TEXT, value REAL, change REAL, ts TEXT, source TEXT, PRIMARY KEY(key, date)
+);
 CREATE TABLE IF NOT EXISTS positions(
   id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL, opened TEXT NOT NULL, qty REAL NOT NULL,
   price REAL NOT NULL, fees REAL DEFAULT 0, closed TEXT, close_price REAL, close_fees REAL DEFAULT 0, created TEXT

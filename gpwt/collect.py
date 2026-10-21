@@ -14,7 +14,7 @@ import traceback
 from datetime import date, datetime, timedelta
 
 from . import biznesradar as br
-from . import bankier, db, espi, flows, gpwpl, http, ofe, pressure
+from . import bankier, db, espi, flows, gpwpl, http, market, ofe, pressure
 from .config import (ESPI_FIRST_RUN_PAGES, ESPI_MAX_PAGES, LOG_DIR, MARKETS, MAX_PDF_BYTES,
                      PDF_CACHE, RATIOS)
 from .util import norm_company, norm_investor
@@ -146,6 +146,15 @@ def backfill_nc_history(con, stats):
             con.commit()
             log.info("      NewConnect: %s/%s spółek", i, len(todo))
     stats["nc_history_rows"] = added
+
+
+def _market_context(con, stats):
+    """Indeksy, waluty i surowce - błąd tego źródła nie może zatrzymać reszty pobierania."""
+    try:
+        market.collect(con, stats)
+    except Exception as e:  # noqa: BLE001
+        log.warning("Kontekst rynku: %s", e)
+        stats["market_error"] = str(e)[:200]
 
 
 def _lock():
@@ -506,6 +515,7 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
             return status, stats
         if quick:  # w trakcie sesji: notowania i nowe komunikaty (ok. minuty)
             collect_market_tables(con, stats, quick=True)
+            _market_context(con, stats)
             collect_espi(con, stats)
             reclassify_other(con, stats)
             fetch_espi_details(con, stats)
@@ -522,6 +532,7 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
             collect_market_tables(con, stats)
             pressure.backfill(con, 10, stats)  # uzupełnia sesje GPW z ostatnich dni, gdyby pobieranie wypadło
             pressure.backfill_indices(con, 10, stats)
+            _market_context(con, stats)
             backfill_nc_history(con, stats)
         if not skip_espi and not ofe_only:
             collect_espi(con, stats, max_pages=max_pages or (500 if since else None), since=since)

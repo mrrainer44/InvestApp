@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
-from gpwt import analyses, collect, config, db, flows, portfolio, pressure, session
+from gpwt import analyses, collect, config, db, flows, market, portfolio, pressure, session
 from gpwt.config import ROOT, SERVER_HOST, SERVER_PORT
 from gpwt.util import ascii_fold, norm_investor
 
@@ -428,6 +428,16 @@ def set_espi_ticker(eid):
     flows.fill_prices(c, max_tickers=5)
     c.close()
     return jsonify({"ok": True})
+
+
+# ---------------- kontekst rynku ----------------
+
+@app.get("/api/market")
+def get_market():
+    c = con()
+    r = market.context(c)
+    c.close()
+    return jsonify(r)
 
 
 # ---------------- moje spółki (portfel) ----------------
