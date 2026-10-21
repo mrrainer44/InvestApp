@@ -612,6 +612,12 @@ def test_pipeline():
     assert cl.get("/api/calendar?days=14").status_code == 200
     assert "warned" in cl.get("/api/session?min=0").get_json()
     assert "warnings" in cl.get("/api/companies").get_json()[0] and "events" in cl.get("/api/portfolio").get_json()
+    # załącznik EBI w XHTML (nie PDF) - czytany jako tekst
+    orig_get = collect.http.get
+    collect.http.get = lambda u, binary=False: "<?xml version='1.0'?><html><body><p>Raport za III kwartał 2026 - 14.11.2026</p></body></html>".encode()
+    xt, _ = collect._pdf_texts(4242, ["https://bonnier.pl/static/att/ebi/2026-01/x.xhtml"], tag="x")
+    collect.http.get = orig_get
+    assert "14.11.2026" in xt and espi.parse_report_dates("Treść raportu: " + xt) == {"q3": "2026-11-14"}
     # szybkie pobieranie w trakcie sesji
     st_q, stats_q = collect.run(quick=True)
     assert st_q == "ok" and stats_q["quotes_GPW"] == 5 and "ratio_cz_GPW" not in stats_q, stats_q

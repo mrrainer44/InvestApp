@@ -323,6 +323,14 @@ def _pdf_texts(espi_id, hrefs, tag=""):
         data = http.get(href, binary=True)
         if not data or len(data) > MAX_PDF_BYTES:
             continue
+        if href.lower().split("?")[0].endswith((".xhtml", ".html", ".htm")) and data.lstrip()[:1] == b"<":
+            # raporty EBI bywają w XHTML (tekst raportu), a nie w PDF
+            from bs4 import BeautifulSoup
+            t = BeautifulSoup(data, "lxml").get_text("\n", strip=True)
+            if t.strip():
+                cache.write_text(t, encoding="utf-8")
+                text += "\n\n=== PDF ===\n" + t
+            continue
         if data[:4] != b"%PDF":
             not_pdf += 1
             log.warning("Załącznik nie jest plikiem PDF (%s B, zaczyna się od %r) - pomijam: %s",
@@ -397,10 +405,12 @@ def fetch_bankier_attachments(con, stats, max_pages=20):
     stats["bankier_parsed"] = parsed_ok
 
 
-def fetch_espi_details(con, stats):
+def fetch_espi_details(con, stats, max_age_days=None):
+    """max_age_days: tylko komunikaty z ostatnich dni (szybkie pobieranie w trakcie sesji nie przerabia zaległości)."""
+    since = (date.today() - timedelta(days=max_age_days)).isoformat() if max_age_days else ""
     todo = con.execute(
-        f"SELECT * FROM espi WHERE fetched=0 AND category IN ({','.join('?' * len(FETCH_BODY))}) ORDER BY id",
-        tuple(FETCH_BODY)).fetchall()
+        f"SELECT * FROM espi WHERE fetched=0 AND category IN ({','.join('?' * len(FETCH_BODY))}) AND ts>=? ORDER BY id",
+        (*tuple(FETCH_BODY), since)).fetchall()
     parsed_ok, not_pdf = 0, 0
     log.info("[2/4] Odczytuję treść i załączniki PDF istotnych komunikatów: %s", len(todo))
     for n_done, row in enumerate(todo, 1):
@@ -532,7 +542,7 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
             _market_context(con, stats)
             collect_espi(con, stats)
             reclassify_other(con, stats)
-            fetch_espi_details(con, stats)
+            fetch_espi_details(con, stats, max_age_days=3)
             store_wz_snapshots(con)
             stats.update(flows.rebuild_changes(con))
             stats.update(flows.fill_prices(con))
