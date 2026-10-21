@@ -497,6 +497,7 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
     try:
         if ohlc_days:  # tylko historia notowań sesyjnych GPW (do wskaźników presji kupujących)
             pressure.backfill(con, ohlc_days, stats)
+            pressure.backfill_indices(con, ohlc_days, stats)
             return status, stats
         if reparse:  # tylko ponowny odczyt zapisanych raportów (po poprawce parsera) i przeliczenie zmian
             reparse_espi(con, stats)
@@ -520,6 +521,7 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
         if not since and not ofe_only:
             collect_market_tables(con, stats)
             pressure.backfill(con, 10, stats)  # uzupełnia sesje GPW z ostatnich dni, gdyby pobieranie wypadło
+            pressure.backfill_indices(con, 10, stats)
             backfill_nc_history(con, stats)
         if not skip_espi and not ofe_only:
             collect_espi(con, stats, max_pages=max_pages or (500 if since else None), since=since)

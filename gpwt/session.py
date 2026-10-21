@@ -3,9 +3,11 @@
   - szerokość rynku: ile spółek rośnie / spada, osobno dla płynnych (obrót >= próg), i jaki obrót stoi za każdą stroną,
   - najwięksi zwycięzcy i przegrani wśród płynnych spółek - w dniu odcięcia dywidendy ze zmianą skorygowaną o dywidendę,
   - skoki obrotu względem średniej z 20 sesji,
-  - nowe transakcje insiderów (MAR) i zmiany znacznych pakietów (art. 69) od zamknięcia poprzedniej sesji,
+  - transakcje insiderów (MAR) i zmiany znacznych pakietów (art. 69) z ostatnich 1 / 5 / 20 sesji, także zsumowane
+    na spółkę (liczy się seria zakupów, a nie pojedyncze zawiadomienie),
   - ważne komunikaty (wezwania, skup akcji własnych),
-  - "Moje spółki" (spółki zaznaczone w wybranej własnej kolumnie) z listą sygnałów do sprawdzenia.
+  - "Moje spółki" (portfel z zakładki Moje spółki albo spółki zaznaczone w wybranej własnej kolumnie) z sygnałami.
+Próg płynności jest osobny dla GPW i NewConnect (na NC obroty są o rząd wielkości mniejsze).
 
 Sygnały to podpowiedzi, co warto obejrzeć - nie rekomendacje kupna ani sprzedaży.
 """
@@ -43,7 +45,7 @@ def _breadth(rows):
             "median_change": statistics.median(chg) if chg else None}
 
 
-def summary(con, min_turnover=100_000, market="", watch_key=None, top=12):
+def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc=30_000, insider_sessions=1):
     day, prev = _dates(con)
     if not day:
         return {"date": None}
@@ -77,7 +79,8 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12):
         x["chg_eff"] = x["exdiv"]["adj_chg"] if "exdiv" in x else chg
         rows.append(x)
     by = {x["ticker"]: x for x in rows}
-    liquid = [x for x in rows if x["traded"] and (x["turnover"] or 0) >= min_turnover]
+    liquid = [x for x in rows if x["traded"]
+              and (x["turnover"] or 0) >= (min_nc if x["market"] == "NC" else min_turnover)]
 
     # komunikaty i zmiany stanu posiadania od zamknięcia poprzedniej sesji
     since = f"{prev} 17:00" if prev else day
@@ -88,10 +91,12 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12):
     counts = {}
     for e in espi_rows:
         counts[e["category"]] = counts.get(e["category"], 0) + 1
+    ds = [r[0] for r in con.execute("SELECT DISTINCT date FROM quotes ORDER BY date DESC LIMIT ?", (insider_sessions + 1,))]
+    since_h = f"{ds[-1]} 17:00" if len(ds) > insider_sessions else since
     holders = [dict(r) for r in con.execute(
-        "SELECT c.ticker, c.investor, c.delta, c.price, c.value, c.source, c.date, c.shares_after, c.note, e.ts, e.title "
-        "FROM changes c JOIN espi e ON e.id=c.espi_id/10 WHERE c.source IN ('mar','art69') AND c.excluded=0 AND e.ts>? "
-        "ORDER BY ABS(COALESCE(c.value, 0)) DESC", (since,))]
+        "SELECT c.ticker, c.investor, c.investor_norm, c.delta, c.price, c.value, c.source, c.date, c.shares_after, "
+        "c.note, e.ts, e.title FROM changes c JOIN espi e ON e.id=c.espi_id/10 WHERE c.source IN ('mar','art69') "
+        "AND c.excluded=0 AND e.ts>? ORDER BY ABS(COALESCE(c.value, 0)) DESC", (since_h,))]
     if market:
         holders = [h for h in holders if h["ticker"] in by]
     for h in holders:
@@ -107,6 +112,23 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12):
                 and abs(net[t]) <= 0.05 * gross[t] / 2}
     for h in holders:
         h["transfer"] = h["ticker"] in transfer
+    # seria na spółkę: ile zakupów i sprzedaży, ilu różnych osób, saldo akcji i wartości
+    series = {}
+    for h in holders:
+        if h["transfer"]:
+            continue
+        g = series.setdefault(h["ticker"], {"ticker": h["ticker"], "name": h["name"], "chg": h["chg"], "buys": 0,
+                                            "sells": 0, "people": set(), "net": 0.0, "value": 0.0, "unpriced": 0,
+                                            "last": h["ts"], "sources": set()})
+        g["buys" if h["delta"] > 0 else "sells"] += 1
+        g["people"].add(h["investor_norm"])
+        g["net"] += h["delta"]
+        g["value"] += h["value"] or 0
+        g["unpriced"] += h["value"] is None
+        g["last"] = max(g["last"], h["ts"])
+        g["sources"].add(h["source"])
+    series = sorted(({**g, "people": len(g["people"]), "sources": sorted(g["sources"])} for g in series.values()),
+                    key=lambda g: -abs(g["value"]))
 
     events = {}
     for t in transfer:
@@ -153,7 +175,11 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12):
     spikes = sorted((x for x in liquid if x["ratio"] and x["ratio"] >= 2), key=lambda x: -x["ratio"])
 
     watch = None
-    if watch_key:
+    held = [r[0] for r in con.execute("SELECT DISTINCT ticker FROM positions WHERE closed IS NULL")]
+    if watch_key in (None, "", "__portfolio") and held:
+        watch = {"key": "__portfolio", "label": "Portfel",
+                 "rows": sorted((pub(by[t]) for t in held if t in by), key=lambda x: -len(x["signals"]))}
+    elif watch_key and watch_key != "__portfolio":
         col = con.execute("SELECT key, label, type FROM custom_columns WHERE key=?", (watch_key,)).fetchone()
         if col:
             tick = [r[0] for r in con.execute("SELECT ticker FROM custom_values WHERE key=? AND value NOT IN "
@@ -162,13 +188,15 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12):
                      "rows": sorted((pub(by[t]) for t in tick if t in by), key=lambda x: -len(x["signals"]))}
 
     return {
-        "date": day, "prev_date": prev, "as_of": as_of, "since": since, "min_turnover": min_turnover, "market": market,
+        "date": day, "prev_date": prev, "as_of": as_of, "since": since, "min_turnover": min_turnover, "min_nc": min_nc,
+        "market": market, "insider_sessions": insider_sessions, "since_holders": since_h, "series": series[:30],
+        "has_portfolio": bool(held),
         "breadth": {"all": _breadth(rows), "liquid": _breadth(liquid)},
         "gainers": [pub(x) for x in reversed(movers[-top:]) if (x["chg_eff"] or 0) > 0],
         "losers": [pub(x) for x in movers[:top] if (x["chg_eff"] or 0) < 0],
         "spikes": [pub(x) for x in spikes[:top]],
         "exdiv": [pub(x) for x in rows if "exdiv" in x],
-        "holders": holders[:40],
+        "holders": holders[:60],
         "espi": {"counts": counts, "total": len(espi_rows),
                  "important": [e for e in espi_rows if e["category"] in ("wezwanie", "skup", "wz_lista")][:30]},
         "watch": watch,

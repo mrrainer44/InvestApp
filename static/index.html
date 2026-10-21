@@ -12,6 +12,7 @@
 <body>
 <nav class="rail" aria-label="Widoki">
   <div class="brand">GPW Tracker<small>GPW i NewConnect</small></div>
+  <button data-view="portfolio">Moje spółki</button>
   <button data-view="session">Sesja</button>
   <button data-view="companies" aria-current="page">Spółki</button>
   <button data-view="investors">Inwestorzy</button>
@@ -22,6 +23,21 @@
 </nav>
 
 <main>
+  <section id="view-portfolio" hidden>
+    <h1>Moje spółki</h1>
+    <p class="lead">Twój portfel: wynik każdej pozycji na tle WIG, plan zapisany przy zakupie i alerty tylko dla Twoich spółek – przebicie poziomu wyjścia, nowe komunikaty, transakcje insiderów, dywidendy. Alerty podpowiadają, co sprawdzić – decyzja zawsze należy do Ciebie.</p>
+    <div class="toolbar">
+      <button class="btn primary" id="pfAdd">Dodaj zakup</button>
+      <button class="btn" id="pfSell">Sprzedaż</button>
+      <span class="grow"></span>
+      <span id="pfAsOf" class="dim"></span>
+    </div>
+    <div id="pfBody"><p class="dim">Wczytuję…</p></div>
+  </section>
+
+  <dialog id="pfDlg" class="dlg"><form method="dialog" id="pfForm"></form></dialog>
+  <datalist id="tickerList"></datalist>
+
   <section id="view-session" hidden>
     <h1>Sesja <span id="sesDate" class="dim"></span></h1>
     <p class="lead">Co się wydarzyło na dzisiejszej sesji: szerokość rynku, najwięksi zwycięzcy i przegrani wśród płynnych spółek, skoki obrotu, nowe transakcje insiderów i dużych akcjonariuszy oraz sygnały dla Twoich spółek. Sygnały podpowiadają, co warto sprawdzić – nie są rekomendacją kupna ani sprzedaży.</p>
@@ -31,11 +47,17 @@
         <button data-smkt="GPW" aria-pressed="false">GPW</button>
         <button data-smkt="NC" aria-pressed="false">NewConnect</button>
       </div>
-      <label class="dim">Płynne spółki: obrót od
+      <label class="dim">Płynne: GPW od
         <select id="sesMin">
           <option value="20000">20 tys. zł</option><option value="50000">50 tys. zł</option>
           <option value="100000">100 tys. zł</option><option value="500000">500 tys. zł</option>
           <option value="1000000">1 mln zł</option><option value="5000000">5 mln zł</option>
+        </select></label>
+      <label class="dim">NewConnect od
+        <select id="sesMinNc">
+          <option value="10000">10 tys. zł</option><option value="20000">20 tys. zł</option>
+          <option value="30000">30 tys. zł</option><option value="50000">50 tys. zł</option>
+          <option value="100000">100 tys. zł</option>
         </select></label>
       <label class="dim">Moje spółki z kolumny <select id="sesWatch"></select></label>
       <span class="grow"></span>

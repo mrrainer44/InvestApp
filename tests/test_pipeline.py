@@ -498,6 +498,38 @@ def test_pipeline():
     pko = [mk("2021", "2022-08-02", 1.83), mk("2023", "2024-01-23", 1.28), mk("2023", "2024-08-06", 2.59),
            mk("2024", "2025-08-01", 5.48), mk("2025", "2026-08-03", 6.14)]  # rosnąca dywidenda to nie jednorazowa
     assert app_mod._dividend_split(pko, _d(2026, 10, 20), "2025-10-20", "2026-10-19")["oneoff12"] == 0
+    # Moje spółki: zakup z planem, dokupienie, częściowa sprzedaż (FIFO), wynik na tle WIG, alert poziomu wyjścia
+    pko_close = next(x for x in cl.get("/api/companies").get_json() if x["ticker"] == "PKO")["price"]
+    dcon = db.connect()
+    dcon.executemany("INSERT OR REPLACE INTO index_ohlc VALUES('WIG',?,?,?,?,?,?)",
+                     [("2026-01-02", 1, 1, 1, 100000.0, 0), (_d.today().isoformat(), 1, 1, 1, 110000.0, 0)])
+    dcon.commit()
+    dcon.close()
+    assert cl.post("/api/positions", json={"ticker": "XXX", "qty": 1, "price": 1}).status_code == 400
+    r1 = cl.post("/api/positions", json={"ticker": "pko", "opened": "2026-01-02", "qty": 100, "price": 100, "fees": 10,
+                                         "thesis": "dywidenda", "stop": pko_close + 1, "target": 200,
+                                         "horizon": "długi (1–5 lat)"}).get_json()
+    assert r1["ok"]
+    cl.post("/api/positions", json={"ticker": "PKO", "opened": "2026-03-02", "qty": 50, "price": 110})
+    pf = cl.get("/api/portfolio").get_json()
+    pos = pf["positions"][0]
+    assert pos["ticker"] == "PKO" and pos["qty"] == 150 and abs(pos["cost"] - (10000 + 10 + 5500)) < 1e-6
+    assert pos["plan"]["thesis"] == "dywidenda" and pos["weight"] == 100
+    assert abs(pos["wig_pct"] - 10.0) < 1e-6  # WIG 100 000 -> 110 000 od obu zakupów
+    assert any(a["kind"] == "stop" and a["level"] == "critical" for a in pf["alerts"]), pf["alerts"]
+    assert cl.post("/api/positions/sell", json={"ticker": "PKO", "qty": 500, "price": 1}).status_code == 400
+    assert cl.post("/api/positions/sell", json={"ticker": "PKO", "qty": 120, "price": 120, "date": "2026-10-01"}).get_json()["ok"]
+    pf = cl.get("/api/portfolio").get_json()
+    assert pf["positions"][0]["qty"] == 30 and pf["positions"][0]["lots"][0]["price"] == 110  # zostało 30 z drugiej partii
+    assert sorted(c["qty"] for c in pf["closed"]) == [20, 100]
+    assert abs(pf["totals"]["realized"] - (120 * 120 - 100 * 100 - 10 - 20 * 110)) < 1e-6
+    cl.put("/api/plans/PKO", json={"stop": "", "target": 150})
+    pl = cl.get("/api/portfolio").get_json()["positions"][0]["plan"]
+    assert pl["stop"] is None and pl["target"] == 150 and pl["thesis"] == "dywidenda"
+    ses = cl.get("/api/session?min=0").get_json()
+    assert ses["watch"]["key"] == "__portfolio" and [x["ticker"] for x in ses["watch"]["rows"]] == ["PKO"]
+    assert ses["insider_sessions"] == 1 and "series" in ses
+    assert cl.get("/api/session?min=0&sessions=20").get_json()["insider_sessions"] == 20
     # szybkie pobieranie w trakcie sesji
     st_q, stats_q = collect.run(quick=True)
     assert st_q == "ok" and stats_q["quotes_GPW"] == 5 and "ratio_cz_GPW" not in stats_q, stats_q

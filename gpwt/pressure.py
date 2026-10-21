@@ -91,3 +91,38 @@ def backfill(con, days=400, stats=None):
     if stats is not None:
         stats["ohlc_sessions"] = fetched
     return fetched
+
+
+INDEX_XLS = "https://www.gpw.pl/archiwum-notowan?fetch=1&type=1&instrument=&date={d}"
+
+
+def backfill_indices(con, days=400, stats=None):
+    """Dzienne notowania indeksów GPW (WIG, WIG20, mWIG40, sWIG80, NCIndex i branżowe) z archiwum gpw.pl
+    - do porównania portfela z WIG i kontekstu rynku. Jedno zapytanie na sesję, tylko brakujące dni."""
+    have = {r[0] for r in con.execute("SELECT date FROM index_ohlc WHERE name='WIG'")}
+    today = date.today()
+    todo = [today - timedelta(days=i) for i in range(days, -1, -1)]
+    todo = [d for d in todo if d.weekday() < 5 and d.isoformat() not in have]
+    fetched = 0
+    if len(todo) > 3:
+        log.info("[sesje] Notowania indeksów: %s dni do pobrania z archiwum gpw.pl", len(todo))
+    for n, d in enumerate(todo, 1):
+        rows = parse_session_full(http.get(INDEX_XLS.format(d=d.strftime("%d-%m-%Y")), binary=True))
+        rows = [r for r in rows or [] if r["close"]]
+        if rows:
+            con.executemany("INSERT OR REPLACE INTO index_ohlc VALUES(?,?,?,?,?,?,?)",
+                            [(r["name"], d.isoformat(), r["open"], r["high"], r["low"], r["close"], r["turnover"])
+                             for r in rows])
+            con.commit()
+            fetched += 1
+        if n % 50 == 0:
+            log.info("      indeksy: %s/%s", n, len(todo))
+    if stats is not None:
+        stats["index_sessions"] = fetched
+    return fetched
+
+
+def index_close(con, name, d):
+    """Zamknięcie indeksu w dniu d albo ostatniej sesji przed nim."""
+    r = con.execute("SELECT close FROM index_ohlc WHERE name=? AND date<=? ORDER BY date DESC LIMIT 1", (name, d)).fetchone()
+    return r[0] if r else None

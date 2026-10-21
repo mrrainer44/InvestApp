@@ -865,16 +865,218 @@ $("#btnRunWeekly").addEventListener("click", () => startRun(true));
 function updateFoot(s) { const r = s.runs.find((x) => x.finished);
   $("#lastRun").textContent = r ? `Ostatnie pobranie: ${r.finished.replace("T", " ").slice(0, 16)} (${r.status === "ok" ? "udane" : "błąd"})` : "Jeszcze nic nie pobrano"; }
 
+/* ---------- moje spółki (portfel) ---------- */
+let pfData = null;
+const HORIZONS = ["krótki (dni–tygodnie)", "średni (miesiące)", "długi (1–5 lat)"];
+const ALERT_LVL = { critical: "bad", warn: "warn", info: "neutral" };
+const signed = (v, d = 2, suf = "%") => v == null ? `<span class="dim">–</span>`
+  : `<span class="${v > 0 ? "up" : v < 0 ? "down" : ""}">${v > 0 ? "+" : ""}${fmtNum(v, d)}${suf}</span>`;
+const signedMoney = (v) => v == null ? `<span class="dim">–</span>`
+  : `<span class="${v > 0 ? "up" : v < 0 ? "down" : ""}">${v > 0 ? "+" : ""}${fmtMoney(v)} zł</span>`;
+const tk = (t) => `<a class="tk" href="#" data-t="${esc(t)}">${esc(t)}</a>`;
+const dd = (d) => d ? d.split("-").reverse().join(".") : "";
+
+async function loadPortfolio() {
+  pfData = await api("/api/portfolio");
+  renderPortfolio(pfData);
+  if (!$("#tickerList").children.length) {
+    const cos = await api("/api/companies");
+    $("#tickerList").innerHTML = cos.map((c) => `<option value="${esc(c.ticker)}">${esc(c.name)}</option>`).join("");
+  }
+}
+
+function renderPortfolio(d) {
+  $("#pfAsOf").textContent = d.as_of ? `kursy: ${d.as_of.replace("T", " ").slice(0, 16)}` : "";
+  const T = d.totals;
+  if (!d.positions.length && !d.closed.length) {
+    $("#pfBody").innerHTML = `<div class="scard"><h2>Zacznij od pierwszego zakupu</h2>
+      <p>Kliknij <b>Dodaj zakup</b> i wpisz spółkę, datę, liczbę akcji i cenę. Od razu zapisz plan: dlaczego kupujesz,
+      przy jakim kursie wychodzisz na stracie, jaki jest cel i horyzont. Aplikacja pokaże wynik na tle WIG, udział w portfelu
+      i alerty tylko dla Twoich spółek.</p></div>`;
+    return;
+  }
+  const kpi = `<div class="kpis pf">
+    <div class="kpi"><h3>Wartość portfela</h3><div class="big">${fmtMoney(T.value)} zł</div>
+      <p class="dim small">${T.n} ${T.n === 1 ? "spółka" : T.n < 5 ? "spółki" : "spółek"} · koszt zakupu ${fmtMoney(T.cost)} zł</p></div>
+    <div class="kpi"><h3>Wynik niezrealizowany</h3><div class="big">${signedMoney(T.pnl)}</div>
+      <p class="dim small">${signed(T.pnl_pct)} od zakupu</p></div>
+    <div class="kpi"><h3>Dziś</h3><div class="big">${signedMoney(T.today_pnl)}</div><p class="dim small">${signed(T.today_pct)}</p></div>
+    <div class="kpi"><h3 title="Wynik portfela minus zmiana WIG od dat Twoich zakupów (ważona kosztem pozycji)">Na tle WIG</h3>
+      <div class="big">${signed(T.vs_wig, 1, " pp")}</div>
+      <p class="dim small">WIG od Twoich zakupów: ${signed(T.wig_pct, 1)}${d.wig_date ? ` (stan na ${dd(d.wig_date)})` : ""}</p></div>
+    <div class="kpi"><h3>Zrealizowany wynik</h3><div class="big">${signedMoney(T.realized)}</div>
+      <p class="dim small">ze sprzedanych pozycji</p></div>
+  </div>`;
+
+  const alerts = d.alerts.length ? `<ul class="alerts">${d.alerts.map((a) => `<li class="al-${a.level}">${levelIcon(ALERT_LVL[a.level])}
+      ${tk(a.ticker)} ${esc(a.text)} ${a.ts ? `<span class="dim">${esc(dd(a.ts.slice(0, 10)))} ${esc(a.ts.slice(11, 16))}</span>` : ""}</li>`).join("")}</ul>`
+    : `<p class="dim">Brak alertów – nic nie przebiło poziomów z planu, brak nowych komunikatów i transakcji insiderów.</p>`;
+
+  const rows = d.positions.map((p) => {
+    const pl = p.plan || {}, toStop = pl.stop && p.close ? (p.close / pl.stop - 1) * 100 : null;
+    const toTarget = pl.target && p.close ? (pl.target / p.close - 1) * 100 : null;
+    return `<tr class="pf-row" data-t="${esc(p.ticker)}">
+      <td>${tk(p.ticker)} <span class="dim nm">${esc(p.name)}</span>${p.alerts.length ? ` <span class="sig ${p.alerts.some((a) => a.level === "critical") ? "down" : p.alerts.some((a) => a.level === "warn") ? "warn" : "info"}" title="${esc(p.alerts.map((a) => a.text).join("\n"))}">${p.alerts.length} ${p.alerts.length === 1 ? "alert" : "alerty"}</span>` : ""}</td>
+      <td class="n">${fmtNum(p.qty, 0)}</td><td class="n">${fmtNum(p.avg_price, 2)}</td><td class="n">${fmtNum(p.close, 2)}</td>
+      <td class="n">${signed(p.chg)}</td><td class="n">${fmtMoney(p.value)}</td><td class="n">${p.weight == null ? "" : fmtNum(p.weight, 1) + "%"}</td>
+      <td class="n">${signedMoney(p.pnl)}</td><td class="n">${signed(p.pnl_pct)}</td>
+      <td class="n" title="Wynik pozycji minus zmiana WIG od daty zakupu (WIG ${p.wig_pct == null ? "–" : fmtNum(p.wig_pct, 1) + "%"})">${signed(p.vs_wig, 1, " pp")}</td>
+      <td class="n">${pl.stop ? `${fmtNum(pl.stop, 2)} <span class="dim">(${toStop > 0 ? "+" : ""}${fmtNum(toStop, 1)}%)</span>` : `<span class="dim">–</span>`}</td>
+      <td class="n">${pl.target ? `${fmtNum(pl.target, 2)} <span class="dim">(${toTarget > 0 ? "+" : ""}${fmtNum(toTarget, 1)}%)</span>` : `<span class="dim">–</span>`}</td>
+      <td class="n" title="Ile dni sprzedawałbyś całą pozycję, biorąc 20% średniego dziennego obrotu">${p.exit_days == null ? `<span class="dim">–</span>` : fmtNum(p.exit_days, 1)}</td>
+      <td class="act"><button class="btn sm" data-pf="plan">Plan</button><button class="btn sm" data-pf="buy">Dokup</button><button class="btn sm" data-pf="sell">Sprzedaj</button></td>
+    </tr>
+    <tr class="pf-detail" hidden data-t="${esc(p.ticker)}"><td colspan="14">${planBlock(p)}</td></tr>`;
+  }).join("");
+  const table = d.positions.length ? `<table class="stable pf-table"><thead><tr><th>Spółka</th><th class="n">Akcje</th>
+    <th class="n">Śr. cena</th><th class="n">Kurs</th><th class="n">Dziś</th><th class="n">Wartość</th><th class="n">Udział</th>
+    <th class="n">Wynik</th><th class="n">Wynik %</th><th class="n">vs WIG</th><th class="n">Wyjście</th><th class="n">Cel</th>
+    <th class="n" title="Dni potrzebne na sprzedaż całej pozycji przy 20% średniego obrotu">Dni wyjścia</th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table><p class="dim small">Kliknij wiersz, żeby zobaczyć plan i partie zakupu.</p>`
+    : `<p class="dim">Nie masz otwartych pozycji.</p>`;
+
+  const divs = d.dividends.length ? `<table class="stable"><thead><tr><th>Spółka</th><th>Za rok</th><th>Ostatni dzień z prawem</th>
+      <th>Wypłata</th><th class="n">Na akcję</th><th class="n">Stopa</th><th class="n">Dla Ciebie (brutto)</th><th>Status</th></tr></thead><tbody>
+      ${d.dividends.map((v) => `<tr><td>${tk(v.ticker)}</td><td>${esc(v.year_for)}</td><td>${dd(v.last_day)}</td><td>${dd(v.pay_day)}</td>
+        <td class="n">${fmtNum(v.dps, 2)} zł</td><td class="n">${v.yield == null ? "" : fmtNum(v.yield, 1) + "%"}</td>
+        <td class="n"><b>${fmtNum(v.amount, 0)} zł</b></td><td class="dim">${esc(v.status || "")}</td></tr>`).join("")}</tbody></table>
+      <p class="dim small">Kwota przy obecnej liczbie akcji. Prawo do dywidendy mają akcje kupione najpóźniej w ostatnim dniu z prawem.</p>`
+    : `<p class="dim">Brak zapowiedzianych dywidend Twoich spółek.</p>`;
+
+  const closed = d.closed.length ? `<details><summary>Sprzedane pozycje (${d.closed.length})</summary>
+      <table class="stable"><thead><tr><th>Spółka</th><th>Kupno</th><th>Sprzedaż</th><th class="n">Akcje</th><th class="n">Cena kupna</th>
+      <th class="n">Cena sprzedaży</th><th class="n">Wynik</th><th class="n">Wynik %</th><th></th></tr></thead><tbody>
+      ${d.closed.map((c) => `<tr><td>${tk(c.ticker)}</td><td>${dd(c.opened)}</td><td>${dd(c.closed)}</td><td class="n">${fmtNum(c.qty, 0)}</td>
+        <td class="n">${fmtNum(c.price, 2)}</td><td class="n">${fmtNum(c.close_price, 2)}</td><td class="n">${signedMoney(c.pnl)}</td>
+        <td class="n">${signed(c.pnl_pct)}</td><td><button class="btn sm danger" data-lotdel="${c.id}" title="Usuń wpis z historii">Usuń</button></td></tr>`).join("")}
+      </tbody></table></details>` : "";
+
+  $("#pfBody").innerHTML = `${kpi}
+    <div class="scard"><h2>Alerty</h2>${alerts}</div>
+    <div class="scard"><h2>Pozycje</h2>${table}</div>
+    <div class="scard"><h2>Kalendarz dywidend</h2>${divs}</div>
+    ${closed ? `<div class="scard">${closed}</div>` : ""}`;
+}
+
+function planBlock(p) {
+  const pl = p.plan || {};
+  const line = (label, v) => `<div><span class="dim">${label}</span><div>${v ? esc(v).replace(/\n/g, "<br>") : `<span class="dim">–</span>`}</div></div>`;
+  return `<div class="plan">
+      ${line("Dlaczego kupiłem", pl.thesis)}
+      <div class="plan-grid">${line("Poziom wyjścia na stracie", pl.stop ? fmtNum(pl.stop, 2) + " zł" : "")}
+        ${line("Cel", pl.target ? fmtNum(pl.target, 2) + " zł" : "")}${line("Horyzont", pl.horizon)}
+        ${line("Przegląd planu", dd(pl.review))}</div>
+      ${line("Notatki", pl.notes)}
+    </div>
+    <table class="stable lots"><thead><tr><th>Partia</th><th class="n">Akcje</th><th class="n">Cena</th><th class="n">Prowizja</th><th></th></tr></thead><tbody>
+      ${p.lots.map((l) => `<tr><td>${dd(l.opened)}</td><td class="n">${fmtNum(l.qty, 0)}</td><td class="n">${fmtNum(l.price, 2)}</td>
+        <td class="n">${fmtNum(l.fees || 0, 2)}</td><td><button class="btn sm" data-lotedit="${l.id}">Popraw</button>
+        <button class="btn sm danger" data-lotdel="${l.id}">Usuń</button></td></tr>`).join("")}</tbody></table>`;
+}
+
+/* formularze: zakup (z planem), plan, sprzedaż, poprawka partii */
+function pfDialog(html, onSubmit) {
+  const dlg = $("#pfDlg");
+  $("#pfForm").innerHTML = `${html}<div class="dlg-actions"><button class="btn" value="cancel" formnovalidate>Anuluj</button>
+    <button class="btn primary" value="ok">Zapisz</button></div><p class="dlg-err down" hidden></p>`;
+  $("#pfForm").onsubmit = async (e) => {
+    if (e.submitter?.value !== "ok") return;
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData($("#pfForm")).entries());
+    try {
+      const r = await fetch(onSubmit.url, { method: onSubmit.method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(onSubmit.body(f)) });
+      const j = await r.json();
+      if (!r.ok || j.ok === false) throw new Error(j.msg || r.statusText);
+      dlg.close(); toast(onSubmit.done); loadPortfolio();
+    } catch (err) { const p = $("#pfForm .dlg-err"); p.textContent = err.message; p.hidden = false; }
+  };
+  dlg.showModal();
+}
+const fld = (name, label, attrs = "", val = "") => `<label class="fld"><span>${label}</span><input name="${name}" ${attrs} value="${esc(val ?? "")}"></label>`;
+const planFields = (pl = {}) => `
+  <label class="fld wide"><span>Dlaczego kupuję</span><textarea name="thesis" rows="3" placeholder="np. wzrost wyników, dywidenda, zakupy zarządu">${esc(pl.thesis || "")}</textarea></label>
+  ${fld("stop", "Poziom wyjścia na stracie (zł)", 'type="number" step="any" min="0"', pl.stop)}
+  ${fld("target", "Cel (zł)", 'type="number" step="any" min="0"', pl.target)}
+  <label class="fld"><span>Horyzont</span><select name="horizon"><option value=""></option>${HORIZONS.map((h) => `<option ${pl.horizon === h ? "selected" : ""}>${h}</option>`).join("")}</select></label>
+  ${fld("review", "Przegląd planu (data)", 'type="date"', pl.review)}
+  <label class="fld wide"><span>Notatki</span><textarea name="notes" rows="2">${esc(pl.notes || "")}</textarea></label>`;
+const today = () => new Date().toISOString().slice(0, 10);
+
+function addLotDialog(ticker = "") {
+  const pos = pfData?.positions.find((p) => p.ticker === ticker);
+  pfDialog(`<h2>${ticker ? `Dokup ${esc(ticker)}` : "Dodaj zakup"}</h2><div class="fgrid">
+      ${fld("ticker", "Spółka (ticker)", `list="tickerList" required ${ticker ? "readonly" : "autofocus"}`, ticker)}
+      ${fld("opened", "Data zakupu", 'type="date" required', today())}
+      ${fld("qty", "Liczba akcji", 'type="number" step="any" min="0" required')}
+      ${fld("price", "Cena za akcję (zł)", 'type="number" step="any" min="0" required')}
+      ${fld("fees", "Prowizja (zł)", 'type="number" step="any" min="0"')}
+      ${pos ? `<p class="dim wide">Plan pozycji zmienisz przyciskiem „Plan”.</p>` : `<h3 class="wide">Plan</h3>${planFields()}`}
+    </div>`, { url: "/api/positions", method: "POST", done: "Zapisano zakup", body: (f) => ({ ...f, ticker: f.ticker.trim().toUpperCase() }) });
+}
+function planDialog(t) {
+  const p = pfData.positions.find((x) => x.ticker === t);
+  pfDialog(`<h2>Plan: ${esc(t)}</h2><div class="fgrid">${planFields(p?.plan)}</div>`,
+    { url: `/api/plans/${encodeURIComponent(t)}`, method: "PUT", done: "Zapisano plan", body: (f) => f });
+}
+function sellDialog(t = "") {
+  const opts = pfData.positions.map((p) => `<option value="${esc(p.ticker)}" ${p.ticker === t ? "selected" : ""}>${esc(p.ticker)} – ${fmtNum(p.qty, 0)} akcji</option>`).join("");
+  const p = pfData.positions.find((x) => x.ticker === t) || pfData.positions[0];
+  if (!p) { toast("Nie masz otwartych pozycji"); return; }
+  pfDialog(`<h2>Sprzedaż</h2><div class="fgrid">
+      <label class="fld"><span>Spółka</span><select name="ticker">${opts}</select></label>
+      ${fld("date", "Data sprzedaży", 'type="date" required', today())}
+      ${fld("qty", "Liczba akcji", 'type="number" step="any" min="0" required', p.qty)}
+      ${fld("price", "Cena za akcję (zł)", 'type="number" step="any" min="0" required', p.close)}
+      ${fld("fees", "Prowizja (zł)", 'type="number" step="any" min="0"')}
+      <p class="dim wide">Sprzedaż zamyka najstarsze partie jako pierwsze (FIFO); wynik trafi do „Sprzedane pozycje”.</p></div>`,
+    { url: "/api/positions/sell", method: "POST", done: "Zapisano sprzedaż", body: (f) => f });
+}
+function lotEditDialog(id) {
+  const lot = pfData.positions.flatMap((p) => p.lots.map((l) => ({ ...l, ticker: p.ticker }))).find((l) => l.id === id);
+  pfDialog(`<h2>Popraw partię ${esc(lot.ticker)}</h2><div class="fgrid">
+      ${fld("opened", "Data zakupu", 'type="date" required', lot.opened)}${fld("qty", "Liczba akcji", 'type="number" step="any" min="0" required', lot.qty)}
+      ${fld("price", "Cena (zł)", 'type="number" step="any" min="0" required', lot.price)}${fld("fees", "Prowizja (zł)", 'type="number" step="any" min="0"', lot.fees)}</div>`,
+    { url: `/api/positions/${id}`, method: "PATCH", done: "Poprawiono partię", body: (f) => f });
+}
+$("#pfAdd").addEventListener("click", () => addLotDialog());
+$("#pfSell").addEventListener("click", () => pfData && sellDialog());
+$("#pfBody").addEventListener("click", async (e) => {
+  const b = e.target.closest("button");
+  if (b?.dataset.pf) { const t = b.closest("tr").dataset.t; ({ plan: planDialog, buy: addLotDialog, sell: sellDialog })[b.dataset.pf](t); return; }
+  if (b?.dataset.lotedit) { lotEditDialog(+b.dataset.lotedit); return; }
+  if (b?.dataset.lotdel) {
+    if (!confirm("Usunąć tę partię z portfela? Tego nie da się cofnąć.")) return;
+    await api(`/api/positions/${b.dataset.lotdel}`, { method: "DELETE" }); toast("Usunięto"); loadPortfolio(); return;
+  }
+  const row = e.target.closest("tr.pf-row");
+  if (row && !e.target.closest("a")) { const det = row.nextElementSibling; det.hidden = !det.hidden; row.classList.toggle("open", !det.hidden); }
+});
+
 /* ---------- sesja dziś ---------- */
-let sesPref = { min: 100000, market: "", watch: "" }, sesTimer = null;
+let sesPref = { min: 100000, min_nc: 30000, market: "", watch: "", sessions: 1 }, sesTimer = null;
 const SIG_LABEL = { insider_buy: "kupno", insider_sell: "sprzedaż", wezwanie: "wezwanie", skup: "skup", exdiv: "dywidenda",
   move_up: "wzrost", move_down: "spadek", volume: "obrót", press_up: "akumulacja", press_down: "dystrybucja", transfer: "przesunięcie" };
 const SIG_TONE = { insider_buy: "up", move_up: "up", press_up: "up", insider_sell: "down", move_down: "down", press_down: "down",
   wezwanie: "warn", volume: "warn", exdiv: "info", skup: "info", transfer: "info" };
+// definicje sygnałów (te same progi co w gpwt/session.py) - pokazywane w dymku pod konkretnym opisem
+const SIG_HELP = {
+  move_up: "Wzrost: zmiana kursu co najmniej +5% (w dniu odcięcia dywidendy - po jej doliczeniu) przy obrocie co najmniej 2× wyższym od średniej z 20 sesji.",
+  move_down: "Spadek: zmiana kursu co najmniej −5% (po doliczeniu dywidendy) przy obrocie co najmniej 2× wyższym od średniej z 20 sesji.",
+  volume: "Obrót: co najmniej 3× wyższy od średniej z 20 sesji (i min. 20 tys. zł), bez dużej zmiany kursu - ktoś buduje lub zamyka pozycję.",
+  press_up: "Akumulacja: presja kupujących (Chaikin Money Flow) z 21 sesji co najmniej +0,25 - sesje kończyły się zwykle blisko dziennego maksimum, liczone z wagą obrotu.",
+  press_down: "Dystrybucja: presja kupujących (CMF) z 21 sesji co najwyżej −0,25 - sesje kończyły się zwykle blisko dziennego minimum przy dużych obrotach.",
+  insider_buy: "Kupno: insider (zarząd, rada lub osoba blisko związana, art. 19 MAR) albo akcjonariusz z ponad 5% (art. 69) zgłosił zakup w wybranym oknie sesji.",
+  insider_sell: "Sprzedaż: insider (art. 19 MAR) albo akcjonariusz z ponad 5% (art. 69) zgłosił sprzedaż w wybranym oknie sesji.",
+  exdiv: "Dywidenda: dziś dzień odcięcia - kurs spada o wartość dywidendy technicznie, zmianę liczymy po jej doliczeniu.",
+  wezwanie: "Wezwanie do zapisywania się na sprzedaż akcji - zwykle po stałej cenie, często z premią.",
+  skup: "Skup akcji własnych przez spółkę.",
+  transfer: "Przesunięcie: kupno i sprzedaż między powiązanymi podmiotami (np. do fundacji rodzinnej) - saldo ok. zera.",
+};
+const sigTitle = (s) => `${s.text}${SIG_HELP[s.kind] ? "\n\n" + SIG_HELP[s.kind] : ""}`;
 const sigChips = (sigs) => (sigs || []).map((s) =>
-  `<span class="sig ${SIG_TONE[s.kind] || ""}" title="${esc(s.text)}">${SIG_LABEL[s.kind] || s.kind}</span>`).join(" ");
+  `<span class="sig ${SIG_TONE[s.kind] || ""}" title="${esc(sigTitle(s))}">${SIG_LABEL[s.kind] || s.kind}</span>`).join(" ");
 const sigList = (sigs) => (sigs || []).length
-  ? `<ul class="siglist">${sigs.map((s) => `<li><span class="sig ${SIG_TONE[s.kind] || ""}">${SIG_LABEL[s.kind] || s.kind}</span> ${esc(s.text)}</li>`).join("")}</ul>`
+  ? `<ul class="siglist">${sigs.map((s) => `<li><span class="sig ${SIG_TONE[s.kind] || ""}" title="${esc(SIG_HELP[s.kind] || "")}">${SIG_LABEL[s.kind] || s.kind}</span> ${esc(s.text)}</li>`).join("")}</ul>`
   : `<span class="dim">bez sygnałów</span>`;
 const chgCell = (x) => {
   const v = x.chg_eff, cls = v > 0 ? "up" : v < 0 ? "down" : "";
@@ -909,7 +1111,7 @@ function renderSession(d) {
   const L = d.breadth.liquid, A = d.breadth.all, ut = L.up_turnover + L.down_turnover || 1;
   const c = d.espi.counts, ins = (c.mar || 0) + (c.art69 || 0);
   const kpi = `<div class="kpis">
-    <div class="kpi wide"><h3>Szerokość rynku – płynne spółki (${L.up + L.flat + L.down})</h3>${breadthBar(L)}
+    <div class="kpi wide"><h3>Szerokość rynku – płynne spółki (${L.up + L.flat + L.down}; GPW od ${fmtMoney(d.min_turnover)} zł, NC od ${fmtMoney(d.min_nc)} zł)</h3>${breadthBar(L)}
       <p class="dim small">Wszystkie notowane: rośnie ${A.up}, spada ${A.down}, bez zmian ${A.flat}, bez handlu ${A.none}. Mediana zmiany płynnych: <b class="${L.median_change > 0 ? "up" : L.median_change < 0 ? "down" : ""}">${L.median_change == null ? "–" : (L.median_change > 0 ? "+" : "") + fmtNum(L.median_change, 2) + "%"}</b></p></div>
     <div class="kpi"><h3>Obrót płynnych spółek</h3>
       <div class="bbar"><i class="up" style="flex:${L.up_turnover || 0.0001}"></i><i class="down" style="flex:${L.down_turnover || 0.0001}"></i></div>
@@ -922,13 +1124,23 @@ function renderSession(d) {
   const w = d.watch;
   const watchHtml = !w
     ? `<p class="dim">Zaznacz swoje spółki w tabeli Spółki w kolumnie Tak/Nie (np. „Mam”, utwórz ją przyciskiem „Dodaj kolumnę”) albo w kolumnie listy, a potem wybierz ją wyżej w polu „Moje spółki z kolumny”.</p>`
-    : !w.rows.length ? `<p class="dim">W kolumnie „${esc(w.label)}” nie zaznaczono jeszcze żadnej spółki.</p>`
+    : !w.rows.length ? `<p class="dim">${w.key === "__portfolio" ? "Portfel jest pusty." : `W kolumnie „${esc(w.label)}” nie zaznaczono jeszcze żadnej spółki.`}</p>`
     : `<table class="stable"><thead><tr><th>Spółka</th><th class="n">Kurs</th><th class="n">Zmiana</th><th class="n">Obrót</th><th class="n">× śr.</th><th>Co się dzieje</th></tr></thead><tbody>
       ${w.rows.map((x) => `<tr><td><a class="tk" href="#" data-t="${esc(x.ticker)}">${esc(x.ticker)}</a> <span class="dim nm">${esc(x.name)}</span></td>
         <td class="n">${fmtNum(x.close, 2)}</td><td class="n">${chgCell(x)}</td><td class="n">${fmtMoney(x.turnover)}</td><td class="n">${ratioCell(x.ratio)}</td>
         <td>${sigList(x.signals)}</td></tr>`).join("")}</tbody></table>`;
 
-  const holders = d.holders.length ? `<table class="stable"><thead><tr><th>Publikacja</th><th>Spółka</th><th>Kto</th><th>Rodzaj</th>
+  const winSeg = `<div class="seg sm" role="group" aria-label="Okno" id="sesWin">${[1, 5, 20].map((n) =>
+      `<button data-ses="${n}" aria-pressed="${n === d.insider_sessions}">${n === 1 ? "od ostatniej sesji" : n + " sesji"}</button>`).join("")}</div>`;
+  const series = d.series.length ? `<table class="stable"><thead><tr><th>Spółka</th><th class="n">Kupna</th><th class="n">Sprzedaże</th>
+      <th class="n">Osób</th><th class="n">Saldo akcji</th><th class="n">Saldo wartości</th><th class="n">Kurs dziś</th><th>Ostatnie</th></tr></thead><tbody>
+      ${d.series.map((g) => `<tr><td>${tk(g.ticker)} <span class="dim nm">${esc(g.name || "")}</span>${g.buys >= 3 && !g.sells ? ` <span class="sig up" title="Co najmniej 3 zakupy bez sprzedaży w oknie">seria zakupów</span>` : ""}${g.sells >= 3 && !g.buys ? ` <span class="sig down" title="Co najmniej 3 sprzedaże bez zakupów w oknie">seria sprzedaży</span>` : ""}</td>
+        <td class="n up">${g.buys || ""}</td><td class="n down">${g.sells || ""}</td><td class="n">${g.people}</td>
+        <td class="n ${g.net > 0 ? "up" : g.net < 0 ? "down" : ""}">${g.net > 0 ? "+" : ""}${fmtNum(g.net, 0)}</td>
+        <td class="n">${signedMoney(g.value || null)}${g.unpriced ? ` <span class="dim" title="Część transakcji bez ceny">*</span>` : ""}</td>
+        <td class="n">${g.chg == null ? "" : signed(g.chg)}</td><td class="dim">${esc(dd(g.last.slice(0, 10)))}</td></tr>`).join("")}</tbody></table>`
+    : `<p class="dim">Brak zawiadomień w tym oknie.</p>`;
+  const holders = d.holders.length ? `<details ${d.insider_sessions === 1 ? "open" : ""}><summary>Pojedyncze zawiadomienia (${d.holders.length})</summary><table class="stable"><thead><tr><th>Publikacja</th><th>Spółka</th><th>Kto</th><th>Rodzaj</th>
       <th class="n">Akcje</th><th class="n">Wartość</th><th class="n">Kurs dziś</th></tr></thead><tbody>
       ${d.holders.map((h) => `<tr class="${h.transfer ? "muted-row" : ""}"><td class="dim n">${esc(h.ts.slice(8, 10) + "." + h.ts.slice(5, 7) + " " + h.ts.slice(11, 16))}</td>
         <td><a class="tk" href="#" data-t="${esc(h.ticker)}">${esc(h.ticker)}</a></td>
@@ -937,7 +1149,7 @@ function renderSession(d) {
         <td class="n ${h.delta > 0 ? "up" : "down"}">${h.delta > 0 ? "+" : ""}${fmtNum(h.delta, 0)}</td>
         <td class="n">${h.value == null ? `<span class="dim">–</span>` : fmtMoney(h.value)}</td>
         <td class="n">${h.chg == null ? "" : `<span class="${h.chg > 0 ? "up" : h.chg < 0 ? "down" : ""}">${h.chg > 0 ? "+" : ""}${fmtNum(h.chg, 2)}%</span>`}</td></tr>`).join("")}
-      </tbody></table>` : `<p class="dim">Brak nowych zawiadomień od zamknięcia poprzedniej sesji.</p>`;
+      </tbody></table></details>` : "";
 
   const imp = d.espi.important.length ? `<ul class="esp">${d.espi.important.map((e) =>
       `<li><span class="tag ${e.category}">${{ wezwanie: "wezwanie", skup: "skup akcji", wz_lista: "akcjonariusze na WZ" }[e.category] || e.category}</span>
@@ -951,7 +1163,8 @@ function renderSession(d) {
       <div class="scard"><h2>Najmocniej spadają</h2>${moversTable(d.losers, "Żadna płynna spółka nie spada.")}</div>
     </div>
     <div class="scard"><h2>Skoki obrotu <span class="dim">– co najmniej 2× średniej z 20 sesji</span></h2>${moversTable(d.spikes, "Brak spółek z wyraźnie wyższym obrotem.")}</div>
-    <div class="scard"><h2>Insiderzy i duzi akcjonariusze <span class="dim">– zawiadomienia od zamknięcia poprzedniej sesji</span></h2>${holders}</div>
+    <div class="scard"><div class="scard-head"><h2>Insiderzy i duzi akcjonariusze <span class="dim">– suma na spółkę w oknie</span></h2>${winSeg}</div>
+      <p class="dim small">Zakupy zarządu działają z opóźnieniem i liczy się ich seria – w dłuższym oknie widać, kto kupuje regularnie.</p>${series}${holders}</div>
     ${d.exdiv.length ? `<div class="scard"><h2>Dzień odcięcia dywidendy</h2><p class="dim small">Kurs spada o wartość dywidendy, bo kupujący dziś już jej nie dostaną – w zestawieniach liczymy zmianę po jej doliczeniu.</p>${moversTable(d.exdiv, "")}</div>` : ""}
     <div class="scard"><h2>Wezwania, skup akcji, listy akcjonariuszy z walnych</h2>${imp}</div>`;
 }
@@ -960,21 +1173,28 @@ async function loadSession() {
   const p = await api("/api/settings/session");
   if (p) sesPref = { ...sesPref, ...p };
   $("#sesMin").value = String(sesPref.min);
+  $("#sesMinNc").value = String(sesPref.min_nc);
   $$("#sesMkt button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.smkt === sesPref.market)));
   await refreshSession();
   clearInterval(sesTimer);
   sesTimer = setInterval(() => { if (current === "session" && !document.hidden) refreshSession(); }, 5 * 60 * 1000);
 }
 async function refreshSession() {
-  const q = new URLSearchParams({ min: sesPref.min, market: sesPref.market, watch: sesPref.watch || "" });
+  const q = new URLSearchParams({ min: sesPref.min, min_nc: sesPref.min_nc, market: sesPref.market,
+    watch: sesPref.watch || "", sessions: sesPref.sessions });
   const d = await api(`/api/session?${q}`);
-  $("#sesWatch").innerHTML = `<option value="">– wybierz –</option>` + d.watch_columns.map((c) =>
+  $("#sesWatch").innerHTML = `<option value="">${d.has_portfolio ? "Portfel (Moje spółki)" : "– wybierz –"}</option>` + d.watch_columns.map((c) =>
     `<option value="${esc(c.key)}">${esc(c.label)}</option>`).join("");
   $("#sesWatch").value = sesPref.watch || "";
   renderSession(d);
 }
 const saveSesPref = () => { api("/api/settings/session", { method: "PUT", body: sesPref }).catch(() => {}); refreshSession(); };
 $("#sesMin").addEventListener("change", (e) => { sesPref.min = +e.target.value; saveSesPref(); });
+$("#sesMinNc").addEventListener("change", (e) => { sesPref.min_nc = +e.target.value; saveSesPref(); });
+$("#sesBody").addEventListener("click", (e) => {
+  const b = e.target.closest("#sesWin button"); if (!b) return;
+  sesPref.sessions = +b.dataset.ses; saveSesPref();
+});
 $("#sesWatch").addEventListener("change", (e) => { sesPref.watch = e.target.value; saveSesPref(); });
 $$("#sesMkt button").forEach((b) => b.addEventListener("click", () => {
   sesPref.market = b.dataset.smkt;
@@ -988,9 +1208,9 @@ $("#sesRefresh").addEventListener("click", async () => {
 });
 
 /* ---------- nawigacja ---------- */
-const loaders = { session: loadSession, companies: loadCompanies, investors: loadInvestors, changes: loadChanges, espi: loadEspi, settings: loadSettings };
+const loaders = { portfolio: loadPortfolio, session: loadSession, companies: loadCompanies, investors: loadInvestors, changes: loadChanges, espi: loadEspi, settings: loadSettings };
 const loaded = {};
-let current = "session";
+let current = "portfolio";
 function showView(v) {
   current = v;
   $$(".rail [data-view]").forEach((b) => b.dataset.view === v ? b.setAttribute("aria-current", "page") : b.removeAttribute("aria-current"));
@@ -998,10 +1218,11 @@ function showView(v) {
   if (!loaded[v]) { loaded[v] = true; loaders[v]().catch((e) => toast("Błąd: " + e.message)); }
   else if (v === "settings") loadSettings();
   else if (v === "session") refreshSession().catch(() => {});
+  else if (v === "portfolio") loadPortfolio().catch(() => {});
   history.replaceState(null, "", `#${v}`);
 }
 function refreshCurrent() { Object.keys(loaded).forEach((k) => delete loaded[k]); showView(current); }
 $$(".rail [data-view]").forEach((b) => b.addEventListener("click", () => showView(b.dataset.view)));
 const startView = location.hash.slice(1);
-showView(startView in loaders ? startView : "session");
+showView(startView in loaders ? startView : "portfolio");
 api("/api/status").then((s) => { updateFoot(s); if (s.job_running) pollStatus(); }).catch(() => {});

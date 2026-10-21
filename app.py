@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
-from gpwt import analyses, collect, config, db, flows, pressure, session
+from gpwt import analyses, collect, config, db, flows, portfolio, pressure, session
 from gpwt.config import ROOT, SERVER_HOST, SERVER_PORT
 from gpwt.util import ascii_fold, norm_investor
 
@@ -430,6 +430,69 @@ def set_espi_ticker(eid):
     return jsonify({"ok": True})
 
 
+# ---------------- moje spółki (portfel) ----------------
+
+@app.get("/api/portfolio")
+def get_portfolio():
+    c = con()
+    r = portfolio.summary(c)
+    c.close()
+    return jsonify(r)
+
+
+def _portfolio_write(fn):
+    c = con()
+    try:
+        out = fn(c)
+        c.commit()
+        return jsonify({"ok": True, **(out or {})})
+    except ValueError as e:
+        return jsonify({"ok": False, "msg": str(e)}), 400
+    finally:
+        c.close()
+
+
+@app.post("/api/positions")
+def add_position():
+    d = request.get_json(force=True)
+    return _portfolio_write(lambda c: {"id": portfolio.add_lot(c, d)})
+
+
+@app.patch("/api/positions/<int:pid>")
+def edit_position(pid):
+    d = request.get_json(force=True)
+
+    def fn(c):
+        row = c.execute("SELECT * FROM positions WHERE id=?", (pid,)).fetchone()
+        if not row:
+            raise ValueError("Nie ma takiej partii")
+        vals = {k: d.get(k, row[k]) for k in ("opened", "qty", "price", "fees")}
+        if not portfolio._f(vals["qty"]) or portfolio._f(vals["price"]) is None:
+            raise ValueError("Podaj liczbę akcji i cenę")
+        c.execute("UPDATE positions SET opened=?, qty=?, price=?, fees=? WHERE id=?",
+                  (vals["opened"], portfolio._f(vals["qty"]), portfolio._f(vals["price"]),
+                   portfolio._f(vals["fees"]) or 0, pid))
+    return _portfolio_write(fn)
+
+
+@app.delete("/api/positions/<int:pid>")
+def delete_position(pid):
+    return _portfolio_write(lambda c: c.execute("DELETE FROM positions WHERE id=?", (pid,)) and None)
+
+
+@app.post("/api/positions/sell")
+def sell_position():
+    d = request.get_json(force=True)
+    return _portfolio_write(lambda c: portfolio.sell(c, d.get("ticker"), d.get("qty"), d.get("price"),
+                                                     d.get("date"), d.get("fees")))
+
+
+@app.put("/api/plans/<ticker>")
+def put_plan(ticker):
+    d = request.get_json(force=True)
+    return _portfolio_write(lambda c: portfolio.save_plan(c, ticker.upper(), d))
+
+
 # ---------------- podsumowanie sesji ----------------
 
 @app.get("/api/session")
@@ -442,8 +505,14 @@ def session_summary():
         min_t = float(a.get("min", pref.get("min", 100_000)))
     except ValueError:
         min_t = 100_000
+    def num_arg(k, default):
+        try:
+            return float(a.get(k, pref.get(k, default)))
+        except (TypeError, ValueError):
+            return default
     r = session.summary(c, min_turnover=min_t, market=a.get("market", pref.get("market", "")),
-                        watch_key=a.get("watch", pref.get("watch")) or None)
+                        watch_key=a.get("watch", pref.get("watch")) or None, min_nc=num_arg("min_nc", 30_000),
+                        insider_sessions=int(num_arg("sessions", 1)) if num_arg("sessions", 1) in (1, 5, 20) else 1)
     c.close()
     return jsonify(r)
 
