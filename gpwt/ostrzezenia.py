@@ -72,7 +72,7 @@ def _compute(con, today=None):
     # emisje akcji
     for r in con.execute("SELECT ticker, ts, title FROM espi WHERE ts>=? AND ticker IS NOT NULL ORDER BY ts DESC",
                          ((today - timedelta(days=60)).isoformat(),)):
-        if "emisja" in espi.keywords(r["title"]) and not any(w["kind"] == "emisja" for w in out.get(r["ticker"], [])):
+        if espi.share_issue(r["title"]) and not any(w["kind"] == "emisja" for w in out.get(r["ticker"], [])):
             add(r["ticker"], "emisja", "warn", f"Emisja akcji / podwyższenie kapitału: {espi.split_title(r['title'])[1]} "
                                               f"({r['ts'][8:10]}.{r['ts'][5:7]})")
 

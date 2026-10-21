@@ -67,8 +67,23 @@ KEYWORDS = [
 ]
 # fałszywe trafienia tagu: umowa z audytorem to nie kontrakt handlowy, obligacje nie rozwadniają akcjonariuszy
 _NOT_TAG = {"umowa": re.compile(r"audytor|bieg[lł]\w* rewident|badani\w* sprawozda", re.I),
-            "emisja": re.compile(r"obligacj|bond|\bFIZ\b|certyfikat", re.I)}
+            "emisja": re.compile(r"obligacj|bond|\bFIZ\b|certyfikat|podporz[aą]dkowan|\btier\b|instrument\w* dodatkow|"
+                                 r"list\w* zastawn|koszt\w* emisji|uzupe[lł]nieni\w* raportu|suplement", re.I)}
 _PERIODIC = re.compile(r"raport (kwartalny|p[oó][lł]roczny|roczny|okresowy)|\bQSr|\bSA-?[PRQ]|\bPSr|\bRS\b", re.I)
+
+
+_SHARE_ISSUE = re.compile(
+    r"emisj\w* (nowych )?akcji|akcj\w* (nowej )?emisji|akcj\w*(\s+[\wąćęłńóśźż]+){0,4}\s+serii\s+[A-Z0-9]{1,3}\b.{0,60}(emisj|subskrypc|zapis|przydzia|ofert)|"
+    r"(emisj|subskrypc|zapis|przydzia|ofert)\w*.{0,60}akcj\w*(\s+[\wąćęłńóśźż]+){0,4}\s+serii|ofert\w* publiczn\w* akcji|kapita[lł]\w* docelow|"
+    r"warrant\w* subskrypcyjn|private placement|new shares|share issue|capital increase|accelerated book|book-?building", re.I)
+
+
+def share_issue(title):
+    """Emisja AKCJI (rozwodnienie) - ostrzej niż tag "emisja": bez obligacji, sprostowań i warunkowych podwyższeń
+    kapitału pod programy motywacyjne."""
+    _, subject = split_title(title)
+    s = subject or title or ""
+    return bool(_SHARE_ISSUE.search(s)) and not _NOT_TAG["emisja"].search(s) and not re.search(r"warunkow\w* podwy", s, re.I)
 
 
 def keywords(title):
