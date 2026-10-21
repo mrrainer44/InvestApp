@@ -680,10 +680,20 @@ document.addEventListener("click", async (e) => {
   toast(value ? `Ocena: ${value}` : "Usunięto ocenę");
 });
 
+// wiersz z tabeli Spółki (kurs, wskaźniki); gdy tabela nie była jeszcze otwarta - z serwera (raz, potem z pamięci)
+let companiesCache = null;
+async function companyRow(t) {
+  const r = tblCompanies?.getRow(t)?.getData();
+  if (r) return r;
+  if (!companiesCache || Date.now() - companiesCache.at > 5 * 60 * 1000) {
+    companiesCache = { at: Date.now(), rows: Object.fromEntries((await api("/api/companies")).map((x) => [x.ticker, x])) };
+  }
+  return companiesCache.rows[t] || {};
+}
+
 async function openCompany(t) {
   drawerTicker = t;
-  const d = await api(`/api/company/${encodeURIComponent(t)}`);
-  const row = tblCompanies?.getRow(t)?.getData() || {};
+  const [d, row] = await Promise.all([api(`/api/company/${encodeURIComponent(t)}`), companyRow(t)]);
   const c = d.company;
   drawerData = d;
   $("#drawerBody").innerHTML = `
