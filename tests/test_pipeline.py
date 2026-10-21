@@ -594,6 +594,19 @@ def test_pipeline():
     kinds = {e["kind"] for e in ev["events"]}
     assert {"rpp", "cpi"} <= kinds, kinds  # RPP 4.11, szybki szacunek CPI 30.10
     assert any(e["kind"] == "raport_termin" and "14" in e["date"][8:] for e in kalendarz.events(db.connect(), 5, start="2026-11-10")["events"])
+    # harmonogram NewConnect z minioną datą raportu i bez raportu w komunikatach -> ostrzeżenie o opóźnieniu
+    nc_t = next(r["ticker"] for r in cl.get("/api/companies").get_json() if r["market"] == "NC")
+    wc = db.connect()
+    wc.execute("INSERT INTO espi(id, ticker, title, ts, category, parsed, fetched) VALUES(7777, ?, 'X (1/2026) Harmonogram "
+               "publikacji raportów okresowych', ?, 'terminy', ?, 1)",
+               (nc_t, f"{_d.today().year}-01-10 10:00", json.dumps({"dates": {"q1": f"{_d.today().year}-01-15"}})))
+    wc.commit()
+    ws = ostrzezenia._compute(wc)
+    assert any(w["kind"] == "raport_opozniony" for w in ws.get(nc_t, [])), ws.get(nc_t)
+    assert any(e["kind"] == "raport" for e in kalendarz.events(wc, 3, start=f"{_d.today().year}-01-14")["events"])
+    wc.execute("DELETE FROM espi WHERE id=7777")
+    wc.commit()
+    wc.close()
     assert ostrzezenia.expected_period("GPW", _d(2026, 10, 21)) == (2026, 2)
     assert ostrzezenia.expected_period("NC", _d(2026, 11, 20)) == (2026, 3)
     assert cl.get("/api/calendar?days=14").status_code == 200

@@ -123,7 +123,7 @@ def _compute(con, today=None):
             sched.setdefault(r["ticker"], {})[kind] = d
     for tk, kinds in sched.items():
         # raporty okresowe widać w komunikatach tylko na NewConnect (EBI); na rynku głównym idą osobnym kanałem
-        if (co.get(tk) or {}).get("market") != "NC":
+        if not co.get(tk) or co[tk]["market"] != "NC":
             continue
         due = [d for d in kinds.values() if d <= (today - timedelta(days=2)).isoformat()]
         if not due:
