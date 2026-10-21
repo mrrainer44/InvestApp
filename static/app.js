@@ -172,6 +172,12 @@ function applyLayout(saved) {
     if (prev && byField[prev]) tblCompanies.moveColumn(l.field, prev, true);
     prev = l.field;
   }
+  // kolumny dodane w nowszej wersji (nie ma ich w zapisanym układzie): obok sąsiada z domyślnej kolejności
+  const known = new Set(saved.layout.map((l) => l.field));
+  BUILTIN.forEach((c, i) => {
+    if (known.has(c.field) || !byField[c.field] || i === 0) return;
+    tblCompanies.moveColumn(c.field, BUILTIN[i - 1].field, true);
+  });
   if (saved.sort && saved.sort.length) tblCompanies.setSort(saved.sort.filter((s) => byField[s.column]));
 }
 
