@@ -14,7 +14,7 @@ const toast = (msg) => { const t = $("#toast"); t.textContent = msg; t.classList
 const debounce = (fn, ms) => { let h; return (...a) => { clearTimeout(h); h = setTimeout(() => fn(...a), ms); }; };
 
 const nf = (d) => new Intl.NumberFormat("pl-PL", { minimumFractionDigits: d, maximumFractionDigits: d });
-const F = { 0: nf(0), 1: nf(1), 2: nf(2) };
+const F = { 0: nf(0), 1: nf(1), 2: nf(2), 3: nf(3), 4: nf(4) };
 const fmtNum = (v, d = 2) => v == null || v === "" || isNaN(v) ? "" : F[d].format(v);
 const fmtMoney = (v) => {
   if (v == null) return "";
