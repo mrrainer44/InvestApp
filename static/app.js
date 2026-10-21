@@ -919,8 +919,8 @@ const HORIZONS = ["krótki (dni–tygodnie)", "średni (miesiące)", "długi (1�
 const ALERT_LVL = { critical: "bad", warn: "warn", info: "neutral" };
 const signed = (v, d = 2, suf = "%") => v == null ? `<span class="dim">–</span>`
   : `<span class="${v > 0 ? "up" : v < 0 ? "down" : ""}">${v > 0 ? "+" : ""}${fmtNum(v, d)}${suf}</span>`;
-// kwoty portfela dokładnie (do złotówki), miliony skrótem
-const fmtPLN = (v) => v == null ? "" : Math.abs(v) >= 1e6 ? `${fmtNum(v / 1e6, 2)} mln zł` : `${fmtNum(v, 0)} zł`;
+// kwoty portfela dokładnie (do grosza, jak u brokera), miliony skrótem
+const fmtPLN = (v) => v == null ? "" : Math.abs(v) >= 1e6 ? `${fmtNum(v / 1e6, 2)} mln zł` : `${fmtNum(v, 2)} zł`;
 const signedMoney = (v) => v == null ? `<span class="dim">–</span>`
   : `<span class="${v > 0 ? "up" : v < 0 ? "down" : ""}">${v > 0 ? "+" : ""}${fmtPLN(v)}</span>`;
 const tk = (t) => `<a class="tk" href="#" data-t="${esc(t)}">${esc(t)}</a>`;
@@ -950,7 +950,7 @@ function pfTabs(d) {
 }
 
 function renderPortfolio(d) {
-  $("#pfAsOf").textContent = d.as_of ? `kursy: ${d.as_of.replace("T", " ").slice(0, 16)}` : "";
+  $("#pfAsOf").textContent = d.as_of ? `wycena po ostatniej transakcji z ${d.as_of.replace("T", " ").slice(0, 16)}` : "";
   const T = d.totals, all = !pfPid && d.portfolios.length > 1;
   const cur = d.portfolios.find((p) => p.id === pfPid);
   if (!d.positions.length && !d.closed.length) {
@@ -994,7 +994,7 @@ function renderPortfolio(d) {
     return `<tr class="pf-row" data-t="${esc(p.ticker)}" data-pid="${p.portfolio_id}">
       <td>${tk(p.ticker)} <span class="dim nm">${esc(p.name)}</span>${p.alerts.length ? ` <span class="sig ${lvl}" title="${esc(p.alerts.map((a) => a.text).join("\n"))}">${p.alerts.length} ${p.alerts.length === 1 ? "alert" : "alerty"}</span>` : ""}</td>
       ${all ? `<td>${pfTag(p.portfolio)}</td>` : ""}
-      <td class="n">${fmtNum(p.qty, 0)}</td><td class="n">${fmtNum(p.avg_price, 2)}</td><td class="n">${fmtNum(p.close, 2)}</td>
+      <td class="n">${fmtNum(p.qty, 0)}</td><td class="n">${fmtNum(p.avg_price, p.avg_price < 10 ? 4 : 2)}</td><td class="n" title="Ostatnia transakcja na GPW z pobrania ${esc((d.as_of || "").replace("T", " ").slice(0, 16))}">${fmtNum(p.close, p.close < 10 ? 3 : 2)}</td>
       <td class="n">${signed(p.chg)}</td><td class="n">${fmtPLN(p.value)}</td><td class="n">${p.weight == null ? "" : fmtNum(p.weight, 1) + "%"}</td>
       <td class="n">${signedMoney(p.pnl)}</td><td class="n">${signed(p.pnl_pct)}</td>
       <td class="n" title="Wynik pozycji minus zmiana WIG od daty zakupu (WIG ${p.wig_pct == null ? "–" : fmtNum(p.wig_pct, 1) + "%"})">${signed(p.vs_wig, 1, " pp")}</td>
@@ -1046,7 +1046,7 @@ function planBlock(p) {
       ${line("Notatki", pl.notes)}
     </div>
     <table class="stable lots"><thead><tr><th>Partia</th><th class="n">Akcje</th><th class="n">Cena</th><th class="n">Prowizja</th><th></th></tr></thead><tbody>
-      ${p.lots.map((l) => `<tr><td>${dd(l.opened)}</td><td class="n">${fmtNum(l.qty, 0)}</td><td class="n">${fmtNum(l.price, 2)}</td>
+      ${p.lots.map((l) => `<tr><td>${dd(l.opened)}</td><td class="n">${fmtNum(l.qty, 0)}</td><td class="n">${fmtNum(l.price, l.price < 10 ? 4 : 2)}</td>
         <td class="n">${fmtNum(l.fees || 0, 2)}</td><td><button class="btn sm" data-lotedit="${l.id}">Popraw</button>
         <button class="btn sm danger" data-lotdel="${l.id}">Usuń</button></td></tr>`).join("")}</tbody></table>`;
 }
