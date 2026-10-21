@@ -911,8 +911,10 @@ function marketCard(m) {
   return `<div class="scard"><h2>Kontekst rynku</h2>${idx}${br}<h3 class="sub">Waluty i surowce</h3>${mac}</div>`;
 }
 
-/* ---------- moje spółki (portfel) ---------- */
+/* ---------- moje spółki (portfele) ---------- */
 let pfData = null;
+let pfPid = (() => { try { return +localStorage.getItem("gpwt_pf") || null; } catch { return null; } })();
+const setPfPid = (v) => { pfPid = v || null; try { localStorage.setItem("gpwt_pf", pfPid || ""); } catch { /* brak pamięci */ } };
 const HORIZONS = ["krótki (dni–tygodnie)", "średni (miesiące)", "długi (1–5 lat)"];
 const ALERT_LVL = { critical: "bad", warn: "warn", info: "neutral" };
 const signed = (v, d = 2, suf = "%") => v == null ? `<span class="dim">–</span>`
@@ -923,10 +925,12 @@ const signedMoney = (v) => v == null ? `<span class="dim">–</span>`
   : `<span class="${v > 0 ? "up" : v < 0 ? "down" : ""}">${v > 0 ? "+" : ""}${fmtPLN(v)}</span>`;
 const tk = (t) => `<a class="tk" href="#" data-t="${esc(t)}">${esc(t)}</a>`;
 const dd = (d) => d ? d.split("-").reverse().join(".") : "";
+const pfTag = (name) => name ? `<span class="pf-tag">${esc(name)}</span>` : "";
 
 async function loadPortfolio() {
   loadMarket().then((m) => renderMarketStrip($("#pfMarket"), m)).catch(() => {});
-  pfData = await api("/api/portfolio");
+  pfData = await api(`/api/portfolio?pid=${pfPid || ""}`);
+  if (pfPid && !pfData.portfolios.some((p) => p.id === pfPid)) { setPfPid(null); return loadPortfolio(); }
   renderPortfolio(pfData);
   if (!$("#tickerList").children.length) {
     const cos = await api("/api/companies");
@@ -934,38 +938,62 @@ async function loadPortfolio() {
   }
 }
 
+function pfTabs(d) {
+  const cur = d.portfolios.find((p) => p.id === pfPid);
+  return `<div class="pf-tabs"><div class="seg" role="group" aria-label="Portfel">
+      ${d.portfolios.length > 1 || !d.portfolios.length ? `<button data-pftab="" aria-pressed="${!pfPid}">Wszystkie</button>` : ""}
+      ${d.portfolios.map((p) => `<button data-pftab="${p.id}" aria-pressed="${p.id === pfPid || (d.portfolios.length === 1 && !pfPid)}">${esc(p.name)}</button>`).join("")}
+    </div>
+    <button class="btn sm" data-pfnew>+ Nowy portfel</button>
+    ${cur || d.portfolios.length === 1 ? `<button class="btn sm" data-pfrename="${(cur || d.portfolios[0]).id}">Zmień nazwę</button>
+      <button class="btn sm danger" data-pfdel="${(cur || d.portfolios[0]).id}">Usuń portfel</button>` : ""}</div>`;
+}
+
 function renderPortfolio(d) {
   $("#pfAsOf").textContent = d.as_of ? `kursy: ${d.as_of.replace("T", " ").slice(0, 16)}` : "";
-  const T = d.totals;
+  const T = d.totals, all = !pfPid && d.portfolios.length > 1;
+  const cur = d.portfolios.find((p) => p.id === pfPid);
   if (!d.positions.length && !d.closed.length) {
-    $("#pfBody").innerHTML = `<div class="scard"><h2>Zacznij od pierwszego zakupu</h2>
+    $("#pfBody").innerHTML = `${pfTabs(d)}<div class="scard"><h2>${cur ? `Portfel „${esc(cur.name)}” jest pusty` : "Zacznij od pierwszego zakupu"}</h2>
       <p>Kliknij <b>Dodaj zakup</b> i wpisz spółkę, datę, liczbę akcji i cenę. Od razu zapisz plan: dlaczego kupujesz,
-      przy jakim kursie wychodzisz na stracie, jaki jest cel i horyzont. Aplikacja pokaże wynik na tle WIG, udział w portfelu
-      i alerty tylko dla Twoich spółek.</p></div>`;
+      przy jakim kursie wychodzisz na stracie, jaki jest cel i horyzont. Masz kilka rachunków (np. IKE i zwykły)?
+      Utwórz osobne portfele przyciskiem <b>+ Nowy portfel</b> – wyniki liczą się osobno i łącznie.</p></div>`;
     return;
   }
+  const title = cur ? `portfela „${esc(cur.name)}”` : all ? "wszystkich portfeli" : "portfela";
   const kpi = `<div class="kpis pf">
-    <div class="kpi"><h3>Wartość portfela</h3><div class="big">${fmtPLN(T.value)}</div>
-      <p class="dim small">${T.n} ${T.n === 1 ? "spółka" : T.n < 5 ? "spółki" : "spółek"} · koszt zakupu ${fmtPLN(T.cost)}</p></div>
+    <div class="kpi"><h3>Wartość ${title}</h3><div class="big">${fmtPLN(T.value)}</div>
+      <p class="dim small">${T.n} ${T.n === 1 ? "pozycja" : T.n < 5 ? "pozycje" : "pozycji"} · koszt zakupu ${fmtPLN(T.cost)}</p></div>
     <div class="kpi"><h3>Wynik niezrealizowany</h3><div class="big">${signedMoney(T.pnl)}</div>
       <p class="dim small">${signed(T.pnl_pct)} od zakupu</p></div>
     <div class="kpi"><h3>Dziś</h3><div class="big">${signedMoney(T.today_pnl)}</div><p class="dim small">${signed(T.today_pct)}</p></div>
-    <div class="kpi"><h3 title="Wynik portfela minus zmiana WIG od dat Twoich zakupów (ważona kosztem pozycji)">Na tle WIG</h3>
+    <div class="kpi"><h3 title="Wynik minus zmiana WIG od dat Twoich zakupów (ważona kosztem pozycji)">Na tle WIG</h3>
       <div class="big">${signed(T.vs_wig, 1, " pp")}</div>
       <p class="dim small">${T.wig_pct == null ? "Brak aktualnych notowań WIG – pojawią się po wieczornym pobraniu." : `WIG od Twoich zakupów: ${signed(T.wig_pct, 1)} (zamknięcie ${dd(d.wig_date)})`}</p></div>
     <div class="kpi"><h3>Zrealizowany wynik</h3><div class="big">${signedMoney(T.realized)}</div>
       <p class="dim small">ze sprzedanych pozycji</p></div>
   </div>`;
 
+  const breakdown = all ? `<div class="scard"><h2>Portfele</h2><table class="stable"><thead><tr><th>Portfel</th><th class="n">Wartość</th>
+      <th class="n">Udział</th><th class="n">Wynik</th><th class="n">Wynik %</th><th class="n">Dziś</th><th class="n">vs WIG</th>
+      <th class="n">Zrealizowany</th><th class="n">Pozycje</th></tr></thead><tbody>
+      ${d.portfolios.map((p) => `<tr><td><a href="#" class="tk" data-pftab="${p.id}">${esc(p.name)}</a></td><td class="n">${fmtPLN(p.value)}</td>
+        <td class="n">${p.share == null ? "" : fmtNum(p.share, 1) + "%"}</td><td class="n">${signedMoney(p.cost ? p.pnl : null)}</td>
+        <td class="n">${signed(p.pnl_pct)}</td><td class="n">${signedMoney(p.cost ? p.today_pnl : null)}</td>
+        <td class="n">${signed(p.vs_wig, 1, " pp")}</td><td class="n">${signedMoney(p.realized || null)}</td><td class="n">${p.n}</td></tr>`).join("")}
+      </tbody></table></div>` : "";
+
   const alerts = d.alerts.length ? `<ul class="alerts">${d.alerts.map((a) => `<li class="al-${a.level}">${levelIcon(ALERT_LVL[a.level])}
-      ${tk(a.ticker)} ${esc(a.text)} ${a.ts ? `<span class="dim">${esc(dd(a.ts.slice(0, 10)))} ${esc(a.ts.slice(11, 16))}</span>` : ""}</li>`).join("")}</ul>`
+      ${tk(a.ticker)} ${all ? pfTag(a.portfolio) : ""} ${esc(a.text)} ${a.ts ? `<span class="dim">${esc(dd(a.ts.slice(0, 10)))} ${esc(a.ts.slice(11, 16))}</span>` : ""}</li>`).join("")}</ul>`
     : `<p class="dim">Brak alertów – nic nie przebiło poziomów z planu, brak nowych komunikatów i transakcji insiderów.</p>`;
 
   const rows = d.positions.map((p) => {
     const pl = p.plan || {}, toStop = pl.stop && p.close ? (p.close / pl.stop - 1) * 100 : null;
     const toTarget = pl.target && p.close ? (pl.target / p.close - 1) * 100 : null;
-    return `<tr class="pf-row" data-t="${esc(p.ticker)}">
-      <td>${tk(p.ticker)} <span class="dim nm">${esc(p.name)}</span>${p.alerts.length ? ` <span class="sig ${p.alerts.some((a) => a.level === "critical") ? "down" : p.alerts.some((a) => a.level === "warn") ? "warn" : "info"}" title="${esc(p.alerts.map((a) => a.text).join("\n"))}">${p.alerts.length} ${p.alerts.length === 1 ? "alert" : "alerty"}</span>` : ""}</td>
+    const lvl = p.alerts.some((a) => a.level === "critical") ? "down" : p.alerts.some((a) => a.level === "warn") ? "warn" : "info";
+    return `<tr class="pf-row" data-t="${esc(p.ticker)}" data-pid="${p.portfolio_id}">
+      <td>${tk(p.ticker)} <span class="dim nm">${esc(p.name)}</span>${p.alerts.length ? ` <span class="sig ${lvl}" title="${esc(p.alerts.map((a) => a.text).join("\n"))}">${p.alerts.length} ${p.alerts.length === 1 ? "alert" : "alerty"}</span>` : ""}</td>
+      ${all ? `<td>${pfTag(p.portfolio)}</td>` : ""}
       <td class="n">${fmtNum(p.qty, 0)}</td><td class="n">${fmtNum(p.avg_price, 2)}</td><td class="n">${fmtNum(p.close, 2)}</td>
       <td class="n">${signed(p.chg)}</td><td class="n">${fmtPLN(p.value)}</td><td class="n">${p.weight == null ? "" : fmtNum(p.weight, 1) + "%"}</td>
       <td class="n">${signedMoney(p.pnl)}</td><td class="n">${signed(p.pnl_pct)}</td>
@@ -975,32 +1003,32 @@ function renderPortfolio(d) {
       <td class="n" title="Ile dni sprzedawałbyś całą pozycję, biorąc 20% średniego dziennego obrotu">${p.exit_days == null ? `<span class="dim">–</span>` : p.exit_days < 0.1 ? "<0,1" : fmtNum(p.exit_days, 1)}</td>
       <td class="act"><button class="btn sm" data-pf="plan">Plan</button><button class="btn sm" data-pf="buy">Dokup</button><button class="btn sm" data-pf="sell">Sprzedaj</button></td>
     </tr>
-    <tr class="pf-detail" hidden data-t="${esc(p.ticker)}"><td colspan="14">${planBlock(p)}</td></tr>`;
+    <tr class="pf-detail" hidden><td colspan="${all ? 15 : 14}">${planBlock(p)}</td></tr>`;
   }).join("");
-  const table = d.positions.length ? `<table class="stable pf-table"><thead><tr><th>Spółka</th><th class="n">Akcje</th>
-    <th class="n">Śr. cena</th><th class="n">Kurs</th><th class="n">Dziś</th><th class="n">Wartość</th><th class="n">Udział</th>
+  const table = d.positions.length ? `<table class="stable pf-table"><thead><tr><th>Spółka</th>${all ? "<th>Portfel</th>" : ""}<th class="n">Akcje</th>
+    <th class="n">Śr. cena</th><th class="n">Kurs</th><th class="n">Dziś</th><th class="n">Wartość</th><th class="n" title="Udział w ${all ? "wszystkich portfelach" : "portfelu"}">Udział</th>
     <th class="n">Wynik</th><th class="n">Wynik %</th><th class="n">vs WIG</th><th class="n">Wyjście</th><th class="n">Cel</th>
     <th class="n" title="Dni potrzebne na sprzedaż całej pozycji przy 20% średniego obrotu">Dni wyjścia</th><th></th></tr></thead>
     <tbody>${rows}</tbody></table><p class="dim small">Kliknij wiersz, żeby zobaczyć plan i partie zakupu.</p>`
     : `<p class="dim">Nie masz otwartych pozycji.</p>`;
 
-  const divs = d.dividends.length ? `<table class="stable"><thead><tr><th>Spółka</th><th>Za rok</th><th>Ostatni dzień z prawem</th>
+  const divs = d.dividends.length ? `<table class="stable"><thead><tr><th>Spółka</th>${all ? "<th>Portfele</th>" : ""}<th>Za rok</th><th>Ostatni dzień z prawem</th>
       <th>Wypłata</th><th class="n">Na akcję</th><th class="n">Stopa</th><th class="n">Dla Ciebie (brutto)</th><th>Status</th></tr></thead><tbody>
-      ${d.dividends.map((v) => `<tr><td>${tk(v.ticker)}</td><td>${esc(v.year_for)}</td><td>${dd(v.last_day)}</td><td>${dd(v.pay_day)}</td>
+      ${d.dividends.map((v) => `<tr><td>${tk(v.ticker)}</td>${all ? `<td>${v.portfolios.map(pfTag).join(" ")}</td>` : ""}<td>${esc(v.year_for)}</td><td>${dd(v.last_day)}</td><td>${dd(v.pay_day)}</td>
         <td class="n">${fmtNum(v.dps, 2)} zł</td><td class="n">${v.yield == null ? "" : fmtNum(v.yield, 1) + "%"}</td>
         <td class="n"><b>${fmtNum(v.amount, 0)} zł</b></td><td class="dim">${esc(v.status || "")}</td></tr>`).join("")}</tbody></table>
       <p class="dim small">Kwota przy obecnej liczbie akcji. Prawo do dywidendy mają akcje kupione najpóźniej w ostatnim dniu z prawem.</p>`
     : `<p class="dim">Brak zapowiedzianych dywidend Twoich spółek.</p>`;
 
   const closed = d.closed.length ? `<details><summary>Sprzedane pozycje (${d.closed.length})</summary>
-      <table class="stable"><thead><tr><th>Spółka</th><th>Kupno</th><th>Sprzedaż</th><th class="n">Akcje</th><th class="n">Cena kupna</th>
+      <table class="stable"><thead><tr><th>Spółka</th>${all ? "<th>Portfel</th>" : ""}<th>Kupno</th><th>Sprzedaż</th><th class="n">Akcje</th><th class="n">Cena kupna</th>
       <th class="n">Cena sprzedaży</th><th class="n">Wynik</th><th class="n">Wynik %</th><th></th></tr></thead><tbody>
-      ${d.closed.map((c) => `<tr><td>${tk(c.ticker)}</td><td>${dd(c.opened)}</td><td>${dd(c.closed)}</td><td class="n">${fmtNum(c.qty, 0)}</td>
+      ${d.closed.map((c) => `<tr><td>${tk(c.ticker)}</td>${all ? `<td>${pfTag(c.portfolio)}</td>` : ""}<td>${dd(c.opened)}</td><td>${dd(c.closed)}</td><td class="n">${fmtNum(c.qty, 0)}</td>
         <td class="n">${fmtNum(c.price, 2)}</td><td class="n">${fmtNum(c.close_price, 2)}</td><td class="n">${signedMoney(c.pnl)}</td>
         <td class="n">${signed(c.pnl_pct)}</td><td><button class="btn sm danger" data-lotdel="${c.id}" title="Usuń wpis z historii">Usuń</button></td></tr>`).join("")}
       </tbody></table></details>` : "";
 
-  $("#pfBody").innerHTML = `${kpi}
+  $("#pfBody").innerHTML = `${pfTabs(d)}${kpi}${breakdown}
     <div class="scard"><h2>Alerty</h2>${alerts}</div>
     <div class="scard"><h2>Pozycje</h2>${table}</div>
     <div class="scard"><h2>Kalendarz dywidend</h2>${divs}</div>
@@ -1023,7 +1051,7 @@ function planBlock(p) {
         <button class="btn sm danger" data-lotdel="${l.id}">Usuń</button></td></tr>`).join("")}</tbody></table>`;
 }
 
-/* formularze: zakup (z planem), plan, sprzedaż, poprawka partii */
+/* formularze: zakup (z planem), plan, sprzedaż, poprawka partii, portfel */
 function pfDialog(html, onSubmit) {
   const dlg = $("#pfDlg");
   $("#pfForm").innerHTML = `${html}<div class="dlg-actions"><button class="btn" value="cancel" formnovalidate>Anuluj</button>
@@ -1036,12 +1064,14 @@ function pfDialog(html, onSubmit) {
       const r = await fetch(onSubmit.url, { method: onSubmit.method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(onSubmit.body(f)) });
       const j = await r.json();
       if (!r.ok || j.ok === false) throw new Error(j.msg || r.statusText);
-      dlg.close(); toast(onSubmit.done); loadPortfolio();
+      dlg.close(); toast(onSubmit.done); if (onSubmit.after) onSubmit.after(j); loadPortfolio();
     } catch (err) { const p = $("#pfForm .dlg-err"); p.textContent = err.message; p.hidden = false; }
   };
   dlg.showModal();
 }
 const fld = (name, label, attrs = "", val = "") => `<label class="fld"><span>${label}</span><input name="${name}" ${attrs} value="${esc(val ?? "")}"></label>`;
+const pfSelect = (sel) => pfData.portfolios.length ? `<label class="fld"><span>Portfel</span><select name="portfolio_id">${pfData.portfolios.map((p) =>
+  `<option value="${p.id}" ${p.id === (sel || pfPid || pfData.portfolios[0].id) ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select></label>` : "";
 const planFields = (pl = {}) => `
   <label class="fld wide"><span>Dlaczego kupuję</span><textarea name="thesis" rows="3" placeholder="np. wzrost wyników, dywidenda, zakupy zarządu">${esc(pl.thesis || "")}</textarea></label>
   ${fld("stop", "Poziom wyjścia na stracie (zł)", 'type="number" step="any" min="0"', pl.stop)}
@@ -1050,11 +1080,13 @@ const planFields = (pl = {}) => `
   ${fld("review", "Przegląd planu (data)", 'type="date"', pl.review)}
   <label class="fld wide"><span>Notatki</span><textarea name="notes" rows="2">${esc(pl.notes || "")}</textarea></label>`;
 const today = () => new Date().toISOString().slice(0, 10);
+const findPos = (t, pid) => pfData?.positions.find((p) => p.ticker === t && p.portfolio_id === pid);
 
-function addLotDialog(ticker = "") {
-  const pos = pfData?.positions.find((p) => p.ticker === ticker);
+function addLotDialog(ticker = "", pid = null) {
+  const pos = ticker && findPos(ticker, pid);
   pfDialog(`<h2>${ticker ? `Dokup ${esc(ticker)}` : "Dodaj zakup"}</h2><div class="fgrid">
       ${fld("ticker", "Spółka (ticker)", `list="tickerList" required ${ticker ? "readonly" : "autofocus"}`, ticker)}
+      ${pos ? `<input type="hidden" name="portfolio_id" value="${pid}">` : pfSelect(pid)}
       ${fld("opened", "Data zakupu", 'type="date" required', today())}
       ${fld("qty", "Liczba akcji", 'type="number" step="any" min="0" required')}
       ${fld("price", "Cena za akcję (zł)", 'type="number" step="any" min="0" required')}
@@ -1062,36 +1094,59 @@ function addLotDialog(ticker = "") {
       ${pos ? `<p class="dim wide">Plan pozycji zmienisz przyciskiem „Plan”.</p>` : `<h3 class="wide">Plan</h3>${planFields()}`}
     </div>`, { url: "/api/positions", method: "POST", done: "Zapisano zakup", body: (f) => ({ ...f, ticker: f.ticker.trim().toUpperCase() }) });
 }
-function planDialog(t) {
-  const p = pfData.positions.find((x) => x.ticker === t);
-  pfDialog(`<h2>Plan: ${esc(t)}</h2><div class="fgrid">${planFields(p?.plan)}</div>`,
-    { url: `/api/plans/${encodeURIComponent(t)}`, method: "PUT", done: "Zapisano plan", body: (f) => f });
+function planDialog(t, pid) {
+  const p = findPos(t, pid);
+  pfDialog(`<h2>Plan: ${esc(t)} ${pfTag(p?.portfolio)}</h2><div class="fgrid">${planFields(p?.plan)}</div>`,
+    { url: `/api/plans/${pid}/${encodeURIComponent(t)}`, method: "PUT", done: "Zapisano plan", body: (f) => f });
 }
-function sellDialog(t = "") {
-  const opts = pfData.positions.map((p) => `<option value="${esc(p.ticker)}" ${p.ticker === t ? "selected" : ""}>${esc(p.ticker)} – ${fmtNum(p.qty, 0)} akcji</option>`).join("");
-  const p = pfData.positions.find((x) => x.ticker === t) || pfData.positions[0];
-  if (!p) { toast("Nie masz otwartych pozycji"); return; }
+function sellDialog(t = "", pid = null) {
+  if (!pfData.positions.length) { toast("Nie masz otwartych pozycji"); return; }
+  const many = pfData.portfolios.length > 1;
+  const opts = pfData.positions.map((p) => `<option value="${p.portfolio_id}|${esc(p.ticker)}" ${p.ticker === t && p.portfolio_id === pid ? "selected" : ""}>${esc(p.ticker)}${many ? ` (${esc(p.portfolio)})` : ""} – ${fmtNum(p.qty, 0)} akcji</option>`).join("");
+  const p = findPos(t, pid) || pfData.positions[0];
   pfDialog(`<h2>Sprzedaż</h2><div class="fgrid">
-      <label class="fld"><span>Spółka</span><select name="ticker">${opts}</select></label>
+      <label class="fld"><span>Pozycja</span><select name="pos">${opts}</select></label>
       ${fld("date", "Data sprzedaży", 'type="date" required', today())}
       ${fld("qty", "Liczba akcji", 'type="number" step="any" min="0" required', p.qty)}
       ${fld("price", "Cena za akcję (zł)", 'type="number" step="any" min="0" required', p.close)}
       ${fld("fees", "Prowizja (zł)", 'type="number" step="any" min="0"')}
-      <p class="dim wide">Sprzedaż zamyka najstarsze partie jako pierwsze (FIFO); wynik trafi do „Sprzedane pozycje”.</p></div>`,
-    { url: "/api/positions/sell", method: "POST", done: "Zapisano sprzedaż", body: (f) => f });
+      <p class="dim wide">Sprzedaż zamyka najstarsze partie w tym portfelu jako pierwsze (FIFO); wynik trafi do „Sprzedane pozycje”.</p></div>`,
+    { url: "/api/positions/sell", method: "POST", done: "Zapisano sprzedaż",
+      body: (f) => { const [portfolio_id, ticker] = f.pos.split("|"); return { ...f, portfolio_id, ticker }; } });
 }
 function lotEditDialog(id) {
-  const lot = pfData.positions.flatMap((p) => p.lots.map((l) => ({ ...l, ticker: p.ticker }))).find((l) => l.id === id);
+  const lot = pfData.positions.flatMap((p) => p.lots.map((l) => ({ ...l, ticker: p.ticker, pid: p.portfolio_id }))).find((l) => l.id === id);
   pfDialog(`<h2>Popraw partię ${esc(lot.ticker)}</h2><div class="fgrid">
       ${fld("opened", "Data zakupu", 'type="date" required', lot.opened)}${fld("qty", "Liczba akcji", 'type="number" step="any" min="0" required', lot.qty)}
-      ${fld("price", "Cena (zł)", 'type="number" step="any" min="0" required', lot.price)}${fld("fees", "Prowizja (zł)", 'type="number" step="any" min="0"', lot.fees)}</div>`,
+      ${fld("price", "Cena (zł)", 'type="number" step="any" min="0" required', lot.price)}${fld("fees", "Prowizja (zł)", 'type="number" step="any" min="0"', lot.fees)}
+      ${pfData.portfolios.length > 1 ? pfSelect(lot.pid) + `<p class="dim wide">Zmiana portfela przenosi tę partię (plan pozycji zostaje w starym portfelu).</p>` : ""}</div>`,
     { url: `/api/positions/${id}`, method: "PATCH", done: "Poprawiono partię", body: (f) => f });
+}
+function portfolioDialog(p = null) {
+  pfDialog(`<h2>${p ? "Zmień nazwę portfela" : "Nowy portfel"}</h2><div class="fgrid">
+      ${fld("name", "Nazwa (np. IKE, IKZE, konto maklerskie)", 'required autofocus maxlength="40"', p?.name || "")}</div>`,
+    { url: p ? `/api/portfolios/${p.id}` : "/api/portfolios", method: p ? "PATCH" : "POST",
+      done: p ? "Zmieniono nazwę" : "Utworzono portfel", body: (f) => f, after: (j) => { if (!p && j.id) setPfPid(j.id); } });
 }
 $("#pfAdd").addEventListener("click", () => addLotDialog());
 $("#pfSell").addEventListener("click", () => pfData && sellDialog());
 $("#pfBody").addEventListener("click", async (e) => {
+  const tab = e.target.closest("[data-pftab]");
+  if (tab) { e.preventDefault(); setPfPid(+tab.dataset.pftab || null); loadPortfolio(); return; }
   const b = e.target.closest("button");
-  if (b?.dataset.pf) { const t = b.closest("tr").dataset.t; ({ plan: planDialog, buy: addLotDialog, sell: sellDialog })[b.dataset.pf](t); return; }
+  if (b?.dataset.pfnew !== undefined && b) { portfolioDialog(); return; }
+  if (b?.dataset.pfrename) { portfolioDialog(pfData.portfolios.find((p) => p.id === +b.dataset.pfrename)); return; }
+  if (b?.dataset.pfdel) {
+    const p = pfData.portfolios.find((x) => x.id === +b.dataset.pfdel);
+    if (!confirm(`Usunąć portfel „${p.name}”? Da się usunąć tylko pusty portfel (bez pozycji i historii sprzedaży).`)) return;
+    try { await api(`/api/portfolios/${p.id}`, { method: "DELETE" }); setPfPid(null); toast("Usunięto portfel"); loadPortfolio(); }
+    catch (err) { toast(JSON.parse(err.message.replace(/^\d+ /, "") || "{}").msg || err.message); }
+    return;
+  }
+  if (b?.dataset.pf) {
+    const tr = b.closest("tr"), t = tr.dataset.t, pid = +tr.dataset.pid;
+    ({ plan: planDialog, buy: addLotDialog, sell: sellDialog })[b.dataset.pf](t, pid); return;
+  }
   if (b?.dataset.lotedit) { lotEditDialog(+b.dataset.lotedit); return; }
   if (b?.dataset.lotdel) {
     if (!confirm("Usunąć tę partię z portfela? Tego nie da się cofnąć.")) return;
@@ -1173,7 +1228,7 @@ function renderSession(d) {
   const w = d.watch;
   const watchHtml = !w
     ? `<p class="dim">Zaznacz swoje spółki w tabeli Spółki w kolumnie Tak/Nie (np. „Mam”, utwórz ją przyciskiem „Dodaj kolumnę”) albo w kolumnie listy, a potem wybierz ją wyżej w polu „Moje spółki z kolumny”.</p>`
-    : !w.rows.length ? `<p class="dim">${w.key === "__portfolio" ? "Portfel jest pusty." : `W kolumnie „${esc(w.label)}” nie zaznaczono jeszcze żadnej spółki.`}</p>`
+    : !w.rows.length ? `<p class="dim">${w.key.startsWith("__portfolio") ? "Portfel jest pusty." : `W kolumnie „${esc(w.label)}” nie zaznaczono jeszcze żadnej spółki.`}</p>`
     : `<table class="stable"><thead><tr><th>Spółka</th><th class="n">Kurs</th><th class="n">Zmiana</th><th class="n">Obrót</th><th class="n">× śr.</th><th>Co się dzieje</th></tr></thead><tbody>
       ${w.rows.map((x) => `<tr><td><a class="tk" href="#" data-t="${esc(x.ticker)}">${esc(x.ticker)}</a> <span class="dim nm">${esc(x.name)}</span></td>
         <td class="n">${fmtNum(x.close, 2)}</td><td class="n">${chgCell(x)}</td><td class="n">${fmtMoney(x.turnover)}</td><td class="n">${ratioCell(x.ratio)}</td>
@@ -1206,7 +1261,7 @@ function renderSession(d) {
     : `<p class="dim">Brak.</p>`;
 
   $("#sesBody").innerHTML = `${kpi}
-    <div class="scard"><h2>Moje spółki${w ? ` <span class="dim">– ${w.key === "__portfolio" ? "portfel" : `kolumna „${esc(w.label)}”`}</span>` : ""}</h2>${watchHtml}</div>
+    <div class="scard"><h2>Moje spółki${w ? ` <span class="dim">– ${w.key.startsWith("__portfolio") ? (w.key === "__portfolio" ? "wszystkie portfele" : `portfel „${esc(w.label)}”`) : `kolumna „${esc(w.label)}”`}</span>` : ""}</h2>${watchHtml}</div>
     ${marketCard(mktData)}
     <div class="scols">
       <div class="scard"><h2>Najmocniej rosną</h2>${moversTable(d.gainers, "Żadna płynna spółka nie rośnie.")}</div>
@@ -1233,7 +1288,9 @@ async function refreshSession() {
   const q = new URLSearchParams({ min: sesPref.min, min_nc: sesPref.min_nc, market: sesPref.market,
     watch: sesPref.watch || "", sessions: sesPref.sessions });
   const d = await api(`/api/session?${q}`);
-  $("#sesWatch").innerHTML = `<option value="">${d.has_portfolio ? "Portfel (Moje spółki)" : "– wybierz –"}</option>` + d.watch_columns.map((c) =>
+  $("#sesWatch").innerHTML = `<option value="">${d.has_portfolio ? "Wszystkie portfele" : "– wybierz –"}</option>`
+    + (d.portfolios.length > 1 ? d.portfolios.map((p) => `<option value="__portfolio:${p.id}">Portfel: ${esc(p.name)}</option>`).join("") : "")
+    + d.watch_columns.map((c) =>
     `<option value="${esc(c.key)}">${esc(c.label)}</option>`).join("");
   $("#sesWatch").value = sesPref.watch || "";
   try { await loadMarket(); renderMarketStrip($("#sesMarket"), mktData); } catch { /* kontekst rynku niedostępny */ }

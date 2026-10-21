@@ -523,9 +523,31 @@ def test_pipeline():
     assert pf["positions"][0]["qty"] == 30 and pf["positions"][0]["lots"][0]["price"] == 110  # zostało 30 z drugiej partii
     assert sorted(c["qty"] for c in pf["closed"]) == [20, 100]
     assert abs(pf["totals"]["realized"] - (120 * 120 - 100 * 100 - 10 - 20 * 110)) < 1e-6
-    cl.put("/api/plans/PKO", json={"stop": "", "target": 150})
+    pid1 = pf["portfolios"][0]["id"]
+    assert pf["portfolios"][0]["name"] == "Mój portfel"  # pierwszy zakup bez portfela tworzy domyślny
+    cl.put(f"/api/plans/{pid1}/PKO", json={"stop": "", "target": 150})
     pl = cl.get("/api/portfolio").get_json()["positions"][0]["plan"]
     assert pl["stop"] is None and pl["target"] == 150 and pl["thesis"] == "dywidenda"
+    # drugi portfel (np. IKE): osobne wyniki, plan i sprzedaż w obrębie portfela, łączne zestawienie
+    assert cl.post("/api/portfolios", json={"name": "Mój portfel"}).status_code == 400  # nazwa zajęta
+    pid2 = cl.post("/api/portfolios", json={"name": "IKE"}).get_json()["id"]
+    cl.post("/api/positions", json={"portfolio_id": pid2, "ticker": "PKO", "opened": "2026-02-02", "qty": 10, "price": 90,
+                                    "thesis": "IKE - długo"})
+    both = cl.get("/api/portfolio").get_json()
+    assert sorted((p["portfolio"], p["qty"]) for p in both["positions"]) == [("IKE", 10), ("Mój portfel", 30)]
+    assert {b["name"]: b["n"] for b in both["portfolios"]} == {"Mój portfel": 1, "IKE": 1}
+    assert abs(sum(b["share"] for b in both["portfolios"]) - 100) < 1e-6
+    ike = cl.get(f"/api/portfolio?pid={pid2}").get_json()
+    assert [p["qty"] for p in ike["positions"]] == [10] and ike["positions"][0]["plan"]["thesis"] == "IKE - długo"
+    assert ike["positions"][0]["weight"] == 100 and ike["totals"]["realized"] == 0 and not ike["closed"]
+    assert cl.post("/api/positions/sell", json={"portfolio_id": pid2, "ticker": "PKO", "qty": 20, "price": 1}).status_code == 400
+    assert cl.delete(f"/api/portfolios/{pid2}").status_code == 400  # niepusty
+    lot2 = ike["positions"][0]["lots"][0]["id"]
+    cl.patch(f"/api/positions/{lot2}", json={"portfolio_id": pid1})  # przeniesienie partii
+    assert cl.get(f"/api/portfolio?pid={pid1}").get_json()["positions"][0]["qty"] == 40
+    assert cl.patch(f"/api/portfolios/{pid2}", json={"name": "IKZE"}).get_json()["ok"]
+    assert cl.delete(f"/api/portfolios/{pid2}").get_json()["ok"]
+    assert cl.get(f"/api/session?min=0&watch=__portfolio:{pid1}").get_json()["watch"]["label"] == "Mój portfel"
     ses = cl.get("/api/session?min=0").get_json()
     assert ses["watch"]["key"] == "__portfolio" and [x["ticker"] for x in ses["watch"]["rows"]] == ["PKO"]
     assert ses["insider_sessions"] == 1 and "series" in ses

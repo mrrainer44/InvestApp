@@ -186,10 +186,14 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc
 
     watch = None
     held = [r[0] for r in con.execute("SELECT DISTINCT ticker FROM positions WHERE closed IS NULL")]
-    if watch_key in (None, "", "__portfolio") and held:
-        watch = {"key": "__portfolio", "label": "Portfel",
-                 "rows": sorted((pub(by[t]) for t in held if t in by), key=lambda x: -len(x["signals"]))}
-    elif watch_key and watch_key != "__portfolio":
+    if (watch_key or "").startswith("__portfolio") or (not watch_key and held):
+        pid = (watch_key or "").partition(":")[2]  # "__portfolio" = wszystkie portfele, "__portfolio:3" = jeden
+        row = con.execute("SELECT name FROM portfolios WHERE id=?", (pid,)).fetchone() if pid else None
+        tick = [r[0] for r in con.execute("SELECT DISTINCT ticker FROM positions WHERE closed IS NULL"
+                                          + (" AND portfolio_id=?" if row else ""), (pid,) if row else ())]
+        watch = {"key": watch_key or "__portfolio", "label": row["name"] if row else "Portfel",
+                 "rows": sorted((pub(by[t]) for t in tick if t in by), key=lambda x: -len(x["signals"]))}
+    elif watch_key:
         col = con.execute("SELECT key, label, type FROM custom_columns WHERE key=?", (watch_key,)).fetchone()
         if col:
             tick = [r[0] for r in con.execute("SELECT ticker FROM custom_values WHERE key=? AND value NOT IN "
@@ -201,6 +205,7 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc
         "date": day, "prev_date": prev, "as_of": as_of, "since": since, "min_turnover": min_turnover, "min_nc": min_nc,
         "market": market, "insider_sessions": insider_sessions, "since_holders": since_h, "series": series[:30],
         "has_portfolio": bool(held),
+        "portfolios": [dict(r) for r in con.execute("SELECT id, name FROM portfolios ORDER BY id")],
         "breadth": {"all": _breadth(rows), "liquid": _breadth(liquid)},
         "gainers": [pub(x) for x in reversed(movers[-top:]) if (x["chg_eff"] or 0) > 0],
         "losers": [pub(x) for x in movers[:top] if (x["chg_eff"] or 0) < 0],

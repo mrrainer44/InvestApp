@@ -52,12 +52,17 @@ CREATE TABLE IF NOT EXISTS market_live(
 CREATE TABLE IF NOT EXISTS macro_daily(
   key TEXT, date TEXT, value REAL, change REAL, ts TEXT, source TEXT, PRIMARY KEY(key, date)
 );
+CREATE TABLE IF NOT EXISTS portfolios(
+  id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, created TEXT
+);
 CREATE TABLE IF NOT EXISTS positions(
   id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL, opened TEXT NOT NULL, qty REAL NOT NULL,
-  price REAL NOT NULL, fees REAL DEFAULT 0, closed TEXT, close_price REAL, close_fees REAL DEFAULT 0, created TEXT
+  price REAL NOT NULL, fees REAL DEFAULT 0, closed TEXT, close_price REAL, close_fees REAL DEFAULT 0, created TEXT,
+  portfolio_id INTEGER
 );
 CREATE TABLE IF NOT EXISTS plans(
-  ticker TEXT PRIMARY KEY, thesis TEXT, stop REAL, target REAL, horizon TEXT, review TEXT, notes TEXT, updated TEXT
+  portfolio_id INTEGER, ticker TEXT, thesis TEXT, stop REAL, target REAL, horizon TEXT, review TEXT, notes TEXT,
+  updated TEXT, PRIMARY KEY(portfolio_id, ticker)
 );
 CREATE TABLE IF NOT EXISTS price_history(
   ticker TEXT, date TEXT, close REAL, PRIMARY KEY(ticker, date)
@@ -103,6 +108,30 @@ def session():
 def init():
     with session() as con:
         con.executescript(SCHEMA)
+        _migrate_portfolios(con)
+
+
+def _migrate_portfolios(con):
+    """Jeden portfel -> wiele portfeli: partie i plany starszych wersji trafiają do pierwszego portfela."""
+    if "portfolio_id" not in {r[1] for r in con.execute("PRAGMA table_info(positions)")}:
+        con.execute("ALTER TABLE positions ADD COLUMN portfolio_id INTEGER")
+    old_plans = "portfolio_id" not in {r[1] for r in con.execute("PRAGMA table_info(plans)")}
+    if old_plans:
+        con.execute("ALTER TABLE plans RENAME TO plans_v1")
+        con.execute("""CREATE TABLE plans(
+          portfolio_id INTEGER, ticker TEXT, thesis TEXT, stop REAL, target REAL, horizon TEXT, review TEXT, notes TEXT,
+          updated TEXT, PRIMARY KEY(portfolio_id, ticker))""")
+    orphans = con.execute("SELECT COUNT(*) FROM positions WHERE portfolio_id IS NULL").fetchone()[0]
+    if orphans or (old_plans and con.execute("SELECT COUNT(*) FROM plans_v1").fetchone()[0]):
+        first = con.execute("SELECT id FROM portfolios ORDER BY id LIMIT 1").fetchone()
+        pid = first[0] if first else con.execute(
+            "INSERT INTO portfolios(name, created) VALUES('Mój portfel', datetime('now'))").lastrowid
+        con.execute("UPDATE positions SET portfolio_id=? WHERE portfolio_id IS NULL", (pid,))
+        if old_plans:
+            con.execute("INSERT OR IGNORE INTO plans SELECT ?, ticker, thesis, stop, target, horizon, review, notes, "
+                        "updated FROM plans_v1", (pid,))
+    if old_plans:
+        con.execute("DROP TABLE plans_v1")
 
 
 def rows(con, sql, params=()):

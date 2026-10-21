@@ -445,7 +445,11 @@ def get_market():
 @app.get("/api/portfolio")
 def get_portfolio():
     c = con()
-    r = portfolio.summary(c)
+    try:
+        pid = int(request.args.get("pid") or 0) or None
+    except ValueError:
+        pid = None
+    r = portfolio.summary(c, pid)
     c.close()
     return jsonify(r)
 
@@ -460,6 +464,23 @@ def _portfolio_write(fn):
         return jsonify({"ok": False, "msg": str(e)}), 400
     finally:
         c.close()
+
+
+@app.post("/api/portfolios")
+def add_portfolio():
+    d = request.get_json(force=True)
+    return _portfolio_write(lambda c: {"id": portfolio.create_portfolio(c, d.get("name"))})
+
+
+@app.patch("/api/portfolios/<int:pid>")
+def rename_portfolio(pid):
+    d = request.get_json(force=True)
+    return _portfolio_write(lambda c: portfolio.rename_portfolio(c, pid, d.get("name")))
+
+
+@app.delete("/api/portfolios/<int:pid>")
+def delete_portfolio(pid):
+    return _portfolio_write(lambda c: portfolio.delete_portfolio(c, pid))
 
 
 @app.post("/api/positions")
@@ -479,6 +500,8 @@ def edit_position(pid):
         vals = {k: d.get(k, row[k]) for k in ("opened", "qty", "price", "fees")}
         if not portfolio._f(vals["qty"]) or portfolio._f(vals["price"]) is None:
             raise ValueError("Podaj liczbę akcji i cenę")
+        if d.get("portfolio_id") and int(d["portfolio_id"]) != row["portfolio_id"]:
+            portfolio.move_lot(c, pid, d["portfolio_id"])
         c.execute("UPDATE positions SET opened=?, qty=?, price=?, fees=? WHERE id=?",
                   (vals["opened"], portfolio._f(vals["qty"]), portfolio._f(vals["price"]),
                    portfolio._f(vals["fees"]) or 0, pid))
@@ -493,14 +516,14 @@ def delete_position(pid):
 @app.post("/api/positions/sell")
 def sell_position():
     d = request.get_json(force=True)
-    return _portfolio_write(lambda c: portfolio.sell(c, d.get("ticker"), d.get("qty"), d.get("price"),
-                                                     d.get("date"), d.get("fees")))
+    return _portfolio_write(lambda c: portfolio.sell(c, d.get("portfolio_id"), d.get("ticker"), d.get("qty"),
+                                                     d.get("price"), d.get("date"), d.get("fees")))
 
 
-@app.put("/api/plans/<ticker>")
-def put_plan(ticker):
+@app.put("/api/plans/<int:pid>/<ticker>")
+def put_plan(pid, ticker):
     d = request.get_json(force=True)
-    return _portfolio_write(lambda c: portfolio.save_plan(c, ticker.upper(), d))
+    return _portfolio_write(lambda c: portfolio.save_plan(c, pid, ticker.upper(), d))
 
 
 # ---------------- podsumowanie sesji ----------------
