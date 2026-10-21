@@ -536,6 +536,8 @@ def test_pipeline():
     both = cl.get("/api/portfolio").get_json()
     assert sorted((p["portfolio"], p["qty"]) for p in both["positions"]) == [("IKE", 10), ("Mój portfel", 30)]
     assert {b["name"]: b["n"] for b in both["portfolios"]} == {"Mój portfel": 1, "IKE": 1}
+    rows_c = {x["ticker"]: x for x in cl.get("/api/companies").get_json()}
+    assert rows_c["PKO"]["pf"] == "Mój portfel, IKE" and rows_c["PKO"]["pf_qty"] == 40 and rows_c["CPD"]["pf"] is None
     assert abs(sum(b["share"] for b in both["portfolios"]) - 100) < 1e-6
     ike = cl.get(f"/api/portfolio?pid={pid2}").get_json()
     assert [p["qty"] for p in ike["positions"]] == [10] and ike["positions"][0]["plan"]["thesis"] == "IKE - długo"

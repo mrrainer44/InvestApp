@@ -61,6 +61,17 @@ def index():
 
 # ---------------- lista spółek ----------------
 
+def _held(c):
+    """Otwarte pozycje z zakładki Moje spółki: {ticker: {names: "IKE, Konto", qty}} - do kolumny "W portfelu"."""
+    out = {}
+    for r in c.execute("SELECT p.ticker, f.name, SUM(p.qty) q FROM positions p LEFT JOIN portfolios f "
+                       "ON f.id=p.portfolio_id WHERE p.closed IS NULL GROUP BY p.ticker, f.name ORDER BY f.id"):
+        h = out.setdefault(r["ticker"], {"names": [], "qty": 0.0})
+        h["names"].append(r["name"] or "portfel")
+        h["qty"] += r["q"]
+    return {t: {"names": ", ".join(h["names"]), "qty": h["qty"]} for t, h in out.items()}
+
+
 def _dividend_split(dl, today, y_ago, prev_session):
     """Dywidendy spółki: wypłacone w 12 mies. (po dniu odcięcia = dzień po ostatnim dniu z prawem), zapowiedziane,
     podział na regularne i jednorazowe. Wypłata jest jednorazowa, gdy jednocześnie:
@@ -127,6 +138,7 @@ def companies():
         "SELECT c.ticker, c.date, c.investor, c.delta FROM changes c JOIN (SELECT ticker, MAX(date) d FROM changes "
         "WHERE source='art69' AND excluded=0 GROUP BY ticker) m ON c.ticker=m.ticker AND c.date=m.d "
         "WHERE c.source='art69'")}
+    held = _held(c)
     custom = {}
     for r in c.execute("SELECT * FROM custom_values"):
         custom.setdefault(r["ticker"], {})[f"c_{r['key']}"] = r["value"]
@@ -180,6 +192,7 @@ def companies():
             "flow_30d": f30["v"] if f30 else None,
             "flow_30d_n": f30["n"] if f30 else None,
             "af_date": af[t][0]["date"] if af.get(t) else None,
+            "pf": held.get(t, {}).get("names"), "pf_qty": held.get(t, {}).get("qty"),
             "af_count": len(af.get(t, [])),
             "cmf21": press.get(t, {}).get(21),
             "cmf63": press.get(t, {}).get(63),

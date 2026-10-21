@@ -35,6 +35,8 @@ const money = (cell) => fmtMoney(cell.getValue());
 const ratio = (cell) => { const v = cell.getValue(); if (v == null) return "";
   return v < 0 ? `<span class="dim">${fmtNum(v, 1)}</span>` : fmtNum(v, 1); };
 const yesno = (cell) => cell.getValue() ? "tak" : `<span class="dim">nie</span>`;
+const pfColFmt = (cell) => { const v = cell.getValue(), q = cell.getRow().getData().pf_qty;
+  return v ? v.split(", ").map((n) => `<span class="pf-tag" title="${fmtNum(q, 0)} akcji w portfelach">${esc(n)}</span>`).join(" ") : ""; };
 const tickerFmt = (cell) => `<a class="tk" href="#" data-t="${esc(cell.getValue())}">${esc(cell.getValue())}</a>`;
 
 const chgFmt = (cell) => {
@@ -75,6 +77,9 @@ const afFmt = (cell) => cell.getValue()
 const BUILTIN = [
   { field: "ticker", title: "Ticker", group: "base", frozen: true, formatter: tickerFmt, headerFilter: "input", width: 86 },
   { field: "name", title: "Spółka", group: "base", headerFilter: "input", width: 190 },
+  { field: "pf", title: "W portfelu", group: "base", width: 130, formatter: pfColFmt, sorter: "string",
+    headerTooltip: "Spółka ma otwartą pozycję w zakładce Moje spółki (nazwa portfela). Aktualizuje się po każdym zakupie i sprzedaży.",
+    headerFilter: "tickCross", headerFilterParams: { tristate: true }, headerFilterFunc: (h, v) => h === null || h === !!v },
   { field: "market", title: "Rynek", group: "base", headerFilter: "list", headerFilterParams: { valuesLookup: true, clearable: true }, width: 80 },
   { field: "sector", title: "Branża", group: "base", headerFilter: "list", headerFilterParams: { valuesLookup: true, clearable: true }, width: 160 },
   { field: "price", title: "Kurs", group: "quote", hozAlign: "right", formatter: num2, sorter: numSort },
@@ -927,9 +932,24 @@ const tk = (t) => `<a class="tk" href="#" data-t="${esc(t)}">${esc(t)}</a>`;
 const dd = (d) => d ? d.split("-").reverse().join(".") : "";
 const pfTag = (name) => name ? `<span class="pf-tag">${esc(name)}</span>` : "";
 
+// tabela Spółki: kolumna "W portfelu" nadąża za zakupami i sprzedażą bez przeładowania całej tabeli
+async function syncCompaniesPortfolio() {
+  if (!tblCompanies) return;
+  const all = pfPid ? await api("/api/portfolio") : pfData, held = {};
+  for (const p of all.positions) {
+    const h = held[p.ticker] ||= { names: [], qty: 0 };
+    if (!h.names.includes(p.portfolio)) h.names.push(p.portfolio);
+    h.qty += p.qty;
+  }
+  const upd = tblCompanies.getData().filter((r) => (r.pf || null) !== (held[r.ticker]?.names.join(", ") || null) || (held[r.ticker] && r.pf_qty !== held[r.ticker].qty))
+    .map((r) => ({ ticker: r.ticker, pf: held[r.ticker]?.names.join(", ") || null, pf_qty: held[r.ticker]?.qty ?? null }));
+  if (upd.length) tblCompanies.updateData(upd);
+}
+
 async function loadPortfolio() {
   loadMarket().then((m) => renderMarketStrip($("#pfMarket"), m)).catch(() => {});
   pfData = await api(`/api/portfolio?pid=${pfPid || ""}`);
+  syncCompaniesPortfolio().catch(() => {});
   if (pfPid && !pfData.portfolios.some((p) => p.id === pfPid)) { setPfPid(null); return loadPortfolio(); }
   renderPortfolio(pfData);
   if (!$("#tickerList").children.length) {
