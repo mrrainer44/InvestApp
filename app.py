@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
-from gpwt import analyses, collect, config, db, flows, market, portfolio, pressure, session
+from gpwt import analyses, collect, config, db, flows, market, portfolio, pressure, session, technicals, trends
 from gpwt.config import ROOT, SERVER_HOST, SERVER_PORT
 from gpwt.util import ascii_fold, norm_investor
 
@@ -139,6 +139,7 @@ def companies():
         "WHERE source='art69' AND excluded=0 GROUP BY ticker) m ON c.ticker=m.ticker AND c.date=m.d "
         "WHERE c.source='art69'")}
     held = _held(c)
+    tech = technicals.compute(c)["rows"]
     custom = {}
     for r in c.execute("SELECT * FROM custom_values"):
         custom.setdefault(r["ticker"], {})[f"c_{r['key']}"] = r["value"]
@@ -193,6 +194,9 @@ def companies():
             "flow_30d_n": f30["n"] if f30 else None,
             "af_date": af[t][0]["date"] if af.get(t) else None,
             "pf": held.get(t, {}).get("names"), "pf_qty": held.get(t, {}).get("qty"),
+            **{k: (tech.get(t) or {}).get(src) for k, src in (
+                ("trend", "trend"), ("vs200", "vs200"), ("rs_1m", "rs_1m"), ("rs_3m", "rs_3m"), ("mom", "mom"),
+                ("new_high52", "new_high52"), ("new_low52", "new_low52"))},
             "af_count": len(af.get(t, [])),
             "cmf21": press.get(t, {}).get(21),
             "cmf63": press.get(t, {}).get(63),
@@ -449,6 +453,24 @@ def set_espi_ticker(eid):
 def get_market():
     c = con()
     r = market.context(c)
+    c.close()
+    return jsonify(r)
+
+
+# ---------------- trendy (średni termin) ----------------
+
+@app.get("/api/trends")
+def get_trends():
+    a = request.args
+
+    def num(k, d):
+        try:
+            return float(a.get(k, d))
+        except ValueError:
+            return d
+    c = con()
+    r = trends.summary(c, min_turn=num("min", 100_000), min_nc=num("min_nc", 30_000),
+                       trend_only=a.get("trend", "1") != "0", fund_days=int(num("days", 365)))
     c.close()
     return jsonify(r)
 

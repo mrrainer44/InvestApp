@@ -14,6 +14,7 @@
   <div class="brand">GPW Tracker<small>GPW i NewConnect</small></div>
   <button data-view="portfolio">Moje spółki</button>
   <button data-view="session">Sesja</button>
+  <button data-view="trends">Trendy</button>
   <button data-view="companies" aria-current="page">Spółki</button>
   <button data-view="investors">Inwestorzy</button>
   <button data-view="changes">Zmiany stanu posiadania</button>
@@ -67,6 +68,25 @@
     </div>
     <div class="mstrip" id="sesMarket"></div>
     <div id="sesBody"><p class="dim">Wczytuję…</p></div>
+  </section>
+
+  <section id="view-trends" hidden>
+    <h1>Trendy</h1>
+    <p class="lead">Średni termin (miesiące): spółki z najsilniejszym momentum w trendzie wzrostowym, sektory, które od miesiąca wygrywają z WIG, i spółki, w których fundusze (OFE, TFI, PPK) zwiększają lub zmniejszają udziały. To zestawienia do dalszej analizy – nie rekomendacje.</p>
+    <div class="toolbar">
+      <label class="dim">Płynne: GPW od
+        <select id="trMin"><option value="50000">50 tys. zł</option><option value="100000">100 tys. zł</option>
+          <option value="500000">500 tys. zł</option><option value="1000000">1 mln zł</option></select></label>
+      <label class="dim">NewConnect od
+        <select id="trMinNc"><option value="10000">10 tys. zł</option><option value="30000">30 tys. zł</option>
+          <option value="100000">100 tys. zł</option></select></label>
+      <label class="dim"><input type="checkbox" id="trTrend" checked> tylko w trendzie wzrostowym</label>
+      <label class="dim">Fundusze z okresu
+        <select id="trDays"><option value="183">6 mies.</option><option value="365">12 mies.</option></select></label>
+      <span class="grow"></span><span id="trAsOf" class="dim"></span>
+    </div>
+    <div class="mstrip" id="trMarket"></div>
+    <div id="trBody"><p class="dim">Wczytuję…</p></div>
   </section>
 
   <section id="view-companies" hidden>

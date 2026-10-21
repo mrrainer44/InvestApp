@@ -560,6 +560,22 @@ def test_pipeline():
     assert wig["value"] == 110000.0 and abs(wig["change_pct"] - 10.0) < 1e-9 and wig["sma200"] is None
     from gpwt import market as _mkt
     assert _mkt._sma([1, 2, 3, 4], 2) == 3.5 and _mkt._sma([1], 2) is None
+    # C/D: słowa kluczowe ESPI, wskaźniki techniczne, sygnały krótkoterminowe w Sesji, zakładka Trendy
+    kw = espi.keywords
+    assert kw("XTPL SA (40/2026) Decyzja o emisji akcji serii X") == ["emisja"]
+    assert kw("ARCHICOM SA (23/2026) Emisja obligacji") == [] and kw("ALTUS SA (1/2026) Wezwanie do udziału w sprawie") == []
+    assert kw("ENERGY SA (43/2026) Zawarcie umowy na realizację prac") == ["umowa"]
+    assert kw("V-MAX SA (9/2026) Podpisanie z firmą audytorską umowy o badanie sprawozdań") == []
+    assert kw("KRUK SA (40/2026) Wstępny szacunkowy wynik finansowy za III kwartał") == ["wyniki"]
+    assert kw("PKO BP (1/2026) Raport kwartalny QSr 3/2026") == []
+    from gpwt import technicals
+    assert technicals._sma([1, 2, 3], 2) == 2.5 and abs(technicals._ret([100, 110], 2, 121) - 21.0) < 1e-9
+    ses = cl.get("/api/session?min=0").get_json()
+    assert {"breakouts", "gaps", "rs_top", "rs_bottom"} <= set(ses) and "tagged" in ses["espi"]
+    tr = cl.get("/api/trends?min=0&min_nc=0&trend=0").get_json()
+    assert {"momentum", "sectors", "funds_buy", "funds_sell", "wig"} <= set(tr)
+    co = cl.get("/api/companies").get_json()[0]
+    assert {"trend", "vs200", "rs_3m", "mom", "new_high52"} <= set(co)
     # szybkie pobieranie w trakcie sesji
     st_q, stats_q = collect.run(quick=True)
     assert st_q == "ok" and stats_q["quotes_GPW"] == 5 and "ratio_cz_GPW" not in stats_q, stats_q

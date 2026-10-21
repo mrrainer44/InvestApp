@@ -351,3 +351,10 @@ h3.sub { font-size: 14px; margin: 14px 0 6px; }
 .pf-tabs .seg { margin-right: 6px; }
 .pf-tag { display: inline-block; font-family: "IBM Plex Sans", sans-serif; font-size: 11.5px; padding: 0 6px; border-radius: 3px;
   background: var(--accent-soft); color: var(--accent); white-space: nowrap; }
+
+/* ---- sygnały i trendy ---- */
+.tag.kw-umowa, .tag.kw-wyniki, .tag.kw-skup { color: var(--accent); border-color: var(--accent); }
+.tag.kw-emisja, .tag.kw-wezwanie { color: var(--signal); border-color: var(--signal); }
+.tag.kw-dywidenda { color: var(--gain); border-color: var(--gain); }
+#view-trends .mcols { margin: 0; }
+#view-trends .mcols > .scard { margin-bottom: 12px; }

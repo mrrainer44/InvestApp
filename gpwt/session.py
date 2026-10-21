@@ -13,7 +13,8 @@ Sygnały to podpowiedzi, co warto obejrzeć - nie rekomendacje kupna ani sprzeda
 """
 import statistics
 
-from . import pressure
+from . import espi as espi_mod
+from . import pressure, technicals
 
 IMPORTANT = ("art69", "mar", "wezwanie", "skup", "wz_lista")
 
@@ -63,6 +64,8 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc
                         ).fetchone()[0]
     avg = _avg_turnover(con, day)
     cmf = pressure.all_cmf(con)
+    tech_all = technicals.compute(con)
+    tech, wig_chg = tech_all["rows"], tech_all["wig"].get("chg")
     exdiv = {}
     if prev:  # ostatni dzień z prawem do dywidendy = poprzednia sesja -> dziś kurs bez dywidendy
         for r in con.execute("SELECT ticker, SUM(dps) dps FROM dividends WHERE last_day=? AND dps>0 GROUP BY ticker",
@@ -87,6 +90,11 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc
             x["exdiv"] = {"dps": dps, "pct": dps / prev_close * 100,
                           "adj_chg": (close + dps) / prev_close * 100 - 100}
         x["chg_eff"] = x["exdiv"]["adj_chg"] if "exdiv" in x else chg
+        tx = tech.get(r["ticker"]) or {}
+        x["breakout"] = "52" if tx.get("new_high52") else "63" if tx.get("new_high63") else None
+        x["gap"] = tx.get("gap") if tx.get("gap") and abs(tx["gap"]["size"]) >= 1 else None
+        x["rs_day"] = (x["chg_eff"] - wig_chg) if x["chg_eff"] is not None and wig_chg is not None and x["traded"] else None
+        x["trend"], x["vs200"] = tx.get("trend"), tx.get("vs200")
         rows.append(x)
     by = {x["ticker"]: x for x in rows}
     liquid = [x for x in rows if x["traded"]
@@ -154,13 +162,27 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc
             {"kind": "insider_buy" if h["delta"] > 0 else "insider_sell",
              "text": f"{who}: {h['investor']} {verb} {abs(h['delta']):,.0f} akcji{val}".replace(",", " ")})
     for e in espi_rows:
+        e["tags"] = espi_mod.keywords(e["title"])
         if e["category"] in ("wezwanie", "skup"):
             events.setdefault(e["ticker"], []).append(
                 {"kind": e["category"], "text": ("Wezwanie: " if e["category"] == "wezwanie" else "Skup akcji: ")
                  + _subject(e["title"])})
+        for tag in ("umowa", "wyniki", "emisja"):
+            if tag in e["tags"]:
+                events.setdefault(e["ticker"], []).append({"kind": f"espi_{tag}", "text": _subject(e["title"])})
 
     def signals(x):
         s = list(events.get(x["ticker"], []))
+        if x.get("breakout") and (x["ratio"] or 0) >= 2:
+            s.append({"kind": "breakout", "text": f"Wybicie do nowego maksimum z {'52 tygodni' if x['breakout'] == '52' else '3 miesięcy'}"
+                                                  f" przy obrocie {x['ratio']:.1f}x średniej"})
+        if x.get("gap"):
+            g = x["gap"]
+            s.append({"kind": "gap_up" if g["dir"] == "up" else "gap_down",
+                      "text": f"Luka {'wzrostowa' if g['dir'] == 'up' else 'spadkowa'} {g['size']:+.1f}% - "
+                              + ("domknięta w trakcie sesji" if g["filled"] else "niedomknięta")})
+        if x.get("rs_day") is not None and wig_chg is not None and wig_chg <= -0.5 and (x["chg_eff"] or 0) >= 2:
+            s.append({"kind": "rs", "text": f"Rośnie w spadkowy dzień: {x['chg_eff']:+.1f}% przy WIG {wig_chg:+.2f}%"})
         if "exdiv" in x:
             d = x["exdiv"]
             s.append({"kind": "exdiv", "text": f"Dzień odcięcia dywidendy {d['dps']:.2f} zł ({d['pct']:.1f}%) - "
@@ -179,10 +201,14 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc
 
     def pub(x):
         return {k: x.get(k) for k in ("ticker", "name", "market", "close", "chg", "chg_eff", "turnover", "avg20",
-                                      "ratio", "cmf21", "exdiv", "mcap")} | {"signals": signals(x)}
+                                      "ratio", "cmf21", "exdiv", "mcap", "breakout", "gap", "rs_day", "trend",
+                                      "vs200")} | {"signals": signals(x)}
 
     movers = sorted((x for x in liquid if x["chg_eff"] is not None), key=lambda x: x["chg_eff"])
     spikes = sorted((x for x in liquid if x["ratio"] and x["ratio"] >= 2), key=lambda x: -x["ratio"])
+    breakouts = sorted((x for x in liquid if x["breakout"] and (x["ratio"] or 0) >= 2), key=lambda x: -(x["ratio"] or 0))
+    gaps = sorted((x for x in liquid if x["gap"]), key=lambda x: -abs(x["gap"]["size"]))
+    rs = sorted((x for x in liquid if x["rs_day"] is not None), key=lambda x: -x["rs_day"])
 
     watch = None
     held = [r[0] for r in con.execute("SELECT DISTINCT ticker FROM positions WHERE closed IS NULL")]
@@ -213,7 +239,11 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc
         "exdiv": [pub(x) for x in rows if "exdiv" in x],
         "holders": holders[:60],
         "espi": {"counts": counts, "total": len(espi_rows),
-                 "important": [e for e in espi_rows if e["category"] in ("wezwanie", "skup", "wz_lista")][:30]},
+                 "important": [e for e in espi_rows if e["category"] in ("wezwanie", "skup", "wz_lista")][:30],
+                 "tagged": [{**e, "chg": by[e["ticker"]]["chg_eff"] if e["ticker"] in by else None}
+                            for e in espi_rows if e["tags"]][:60]},
+        "breakouts": [pub(x) for x in breakouts[:top]], "gaps": [pub(x) for x in gaps[:top]],
+        "rs_top": [pub(x) for x in rs[:8]], "rs_bottom": [pub(x) for x in rs[-8:][::-1]], "wig_chg": wig_chg,
         "watch": watch,
         "watch_columns": [dict(r) for r in con.execute("SELECT key, label, type FROM custom_columns ORDER BY label")],
     }

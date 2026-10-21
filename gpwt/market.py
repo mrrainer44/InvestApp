@@ -108,56 +108,20 @@ def _sma(vals, n):
     return sum(vals[-n:]) / n if len(vals) >= n else None
 
 
-def _calendar(con):
-    return [r[0] for r in con.execute("SELECT date FROM ohlc GROUP BY date HAVING COUNT(*) > 100 ORDER BY date")]
-
-
 def breadth(con):
-    """Spółki GPW: odsetek nad SMA50 i SMA200, nowe maksima/minima 52-tyg. (zamknięcia uzupełniane do przodu)."""
-    cal = _calendar(con)
-    if len(cal) < 60:
+    """Spółki GPW: odsetek nad SMA50 i SMA200, nowe maksima/minima 52-tyg. (wspólne wyliczenia z technicals)."""
+    from . import technicals
+    t = technicals.compute(con)
+    rows = [x for x in t["rows"].values() if x["market"] == "GPW"]
+    if t.get("sessions", 0) < 60 or not rows:
         return None
-    today_q = {r["ticker"]: r for r in con.execute(
-        "SELECT q.ticker, q.close, q.date, c.full_name, c.short_name FROM quotes q JOIN companies c ON c.ticker=q.ticker "
-        "WHERE c.market='GPW' AND q.date=(SELECT MAX(date) FROM quotes)")}
-    last_day = max(today_q[t]["date"] for t in today_q) if today_q else cal[-1]
-    hist = {}
-    for r in con.execute("SELECT o.ticker, o.date, o.high, o.low, o.close FROM ohlc o JOIN companies c ON c.ticker=o.ticker "
-                         "WHERE c.market='GPW' AND o.date<? ORDER BY o.date", (last_day,)):
-        hist.setdefault(r["ticker"], {})[r["date"]] = (r["high"], r["low"], r["close"])
-    past = [d for d in cal if d < last_day]
-    today_ohlc = {r["ticker"]: r for r in con.execute("SELECT ticker, high, low, close FROM ohlc WHERE date=?", (last_day,))}
-    out = {"n": 0, "above50": 0, "above200": 0, "n200": 0, "highs": [], "lows": [], "date": last_day,
-           "sessions": len(past)}
-    for t, rows in hist.items():
-        q = today_q.get(t)
-        if not q or not q["close"] or len(rows) < 20:
-            continue
-        closes, highs, lows, last = [], [], [], None
-        for d in past:  # dni bez handlu: kurs z ostatniej transakcji
-            if d in rows:
-                last = rows[d]
-            if last:
-                closes.append(last[2])
-                highs.append(last[0] or last[2])
-                lows.append(last[1] or last[2])
-        close = q["close"]
-        sma50, sma200 = _sma(closes, 50), _sma(closes, 200)
-        if sma50:
-            out["n"] += 1
-            out["above50"] += close > sma50
-        if sma200:
-            out["n200"] += 1
-            out["above200"] += close > sma200
-        if len(highs) >= 200:  # nowe maksimum/minimum 52 tygodni (250 sesji, min. 200 sesji historii)
-            o = today_ohlc.get(t)
-            hi = (o["high"] if o and o["high"] else close)
-            lo = (o["low"] if o and o["low"] else close)
-            name = q["full_name"] or q["short_name"]
-            if hi > max(highs[-250:]):
-                out["highs"].append({"ticker": t, "name": name, "close": close, "prev_max": max(highs[-250:])})
-            elif lo < min(lows[-250:]):
-                out["lows"].append({"ticker": t, "name": name, "close": close, "prev_min": min(lows[-250:])})
+    w50 = [x for x in rows if x["sma50"]]
+    w200 = [x for x in rows if x["sma200"]]
+    pick = lambda x, k: {"ticker": x["ticker"], "name": x["name"], "close": x["close"], k: x["max52" if k == "prev_max" else "min52"]}  # noqa: E731
+    out = {"n": len(w50), "above50": sum(x["close"] > x["sma50"] for x in w50), "n200": len(w200),
+           "above200": sum(x["close"] > x["sma200"] for x in w200), "date": t["day"], "sessions": t["sessions"],
+           "highs": [pick(x, "prev_max") for x in rows if x["new_high52"]],
+           "lows": [pick(x, "prev_min") for x in rows if x["new_low52"]]}
     out["pct50"] = out["above50"] / out["n"] * 100 if out["n"] else None
     out["pct200"] = out["above200"] / out["n200"] * 100 if out["n200"] else None
     return out

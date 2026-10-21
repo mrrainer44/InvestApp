@@ -44,6 +44,34 @@ _RULES = [
 ]
 
 
+# słowa kluczowe w tytułach komunikatów (tagi w Sesji i kalendarzu); raporty okresowe pomijamy
+KEYWORDS = [
+    ("umowa", r"umow|kontrakt|zam[oó]wieni|zleceni|porozumieni|list\w* intencyjn|aneks|kontrahent|"
+              r"\bcontract|\bagreement|\border\b|purchase order"),
+    ("wyniki", r"szacunkow|wst[eę]pn\w* (wynik|dan)|wybran\w* (dan|wynik)|prognoz|estimated (results|financial)|"
+               r"preliminary (results|financial)|guidance"),
+    ("skup", r"skup\w* akcji|nabyci\w* akcji w[lł]asnych|buy-?\s?back|treasury shares|own shares"),
+    ("wezwanie", r"wezwani\w* do zapis|og[lł]osz\w* wezwani|wezwani\w* na (sprzeda|akcje)|stanowisk\w*.{0,40}wezwani|"
+                 r"zamiar\w*.{0,30}wezwani|mandatory.{0,20}tender offer|tender offer to|takeover"),
+    ("emisja", r"emisj|ofert\w* publiczn|prospekt|zapis\w* na akcje|subskrypc|book-?building|podwy[zż]szeni\w* kapita|"
+               r"warrant\w* subskrypcyjn|share issue|new shares|capital increase|private placement"),
+    ("dywidenda", r"dywidend|dividend"),
+    ("wz", r"walne\w* zgromadzeni|\b[NZ]?WZ\b|general meeting|\bAGM\b|\bEGM\b"),
+]
+# fałszywe trafienia tagu: umowa z audytorem to nie kontrakt handlowy, obligacje nie rozwadniają akcjonariuszy
+_NOT_TAG = {"umowa": re.compile(r"audytor|bieg[lł]\w* rewident|badani\w* sprawozda", re.I),
+            "emisja": re.compile(r"obligacj|bond|\bFIZ\b|certyfikat", re.I)}
+_PERIODIC = re.compile(r"raport (kwartalny|p[oó][lł]roczny|roczny|okresowy)|\bQSr|\bSA-?[PRQ]|\bPSr|\bRS\b", re.I)
+
+
+def keywords(title):
+    _, subject = split_title(title)
+    s = subject or title or ""
+    if _PERIODIC.search(s):
+        return []
+    return [tag for tag, pat in KEYWORDS if re.search(pat, s, re.I) and not (tag in _NOT_TAG and _NOT_TAG[tag].search(s))]
+
+
 def split_title(title):
     m = TITLE_RE.match(title or "")
     if m:

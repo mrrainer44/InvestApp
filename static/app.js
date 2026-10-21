@@ -53,6 +53,9 @@ const divYieldFmt = (cell) => {
   return `${fmtNum(v, 2)}%${one}${cell.getField() === "div_yield_regular" ? warn : ""}`;
 };
 
+const trendFmt = (c) => c.getValue() == null ? "" : c.getValue() ? `<span class="up">▲ wzrost.</span>` : `<span class="down">▼ spadk.</span>`;
+const ppFmt = (c) => { const v = c.getValue(); return v == null ? "" : `<span class="${v > 0 ? "up" : v < 0 ? "down" : ""}">${v > 0 ? "+" : ""}${fmtNum(v, 1)} pp</span>`; };
+
 let flowScale = 1;
 const flowBar = (v, scale) => {
   if (v == null) return "";
@@ -66,7 +69,7 @@ const numSort = (a, b) => (a ?? -Infinity) - (b ?? -Infinity);
 /* ---------- kolumny listy spółek ---------- */
 const GROUPS = {
   base: "Podstawowe", quote: "Notowania", ret: "Stopy zwrotu", val: "Wycena",
-  div: "Dywidendy", own: "Akcjonariat i przepływy", press: "Presja kupujących", af: "Analiza fundamentalna",
+  tech: "Trend i siła względna", div: "Dywidendy", own: "Akcjonariat i przepływy", press: "Presja kupujących", af: "Analiza fundamentalna",
   custom: "Moje kolumny",
 };
 const cmfFmt = (cell) => { const v = cell.getValue(); if (v == null) return `<span class="dim">–</span>`;
@@ -94,6 +97,21 @@ const BUILTIN = [
   { field: "r6m", title: "6 mies.", group: "ret", hozAlign: "right", formatter: pct, sorter: numSort, visible: false },
   { field: "ytd", title: "Od początku roku", group: "ret", hozAlign: "right", formatter: pct, sorter: numSort },
   { field: "r12m", title: "12 mies.", group: "ret", hozAlign: "right", formatter: pct, sorter: numSort },
+  { field: "trend", title: "Trend", group: "tech", hozAlign: "center", width: 96, formatter: trendFmt,
+    headerTooltip: "Wzrostowy: średnia z 50 sesji nad średnią z 200 sesji (spadkowy - odwrotnie). Puste: za krótka historia notowań.",
+    headerFilter: "list", headerFilterParams: { values: { true: "wzrostowy", false: "spadkowy" }, clearable: true },
+    headerFilterFunc: (h, v) => String(v) === String(h) },
+  { field: "vs200", title: "vs SMA200", group: "tech", hozAlign: "right", formatter: pct, sorter: numSort,
+    headerTooltip: "Odległość kursu od średniej z 200 sesji (%)." },
+  { field: "rs_1m", title: "Siła 1 mies.", group: "tech", hozAlign: "right", formatter: ppFmt, sorter: numSort, visible: false,
+    headerTooltip: "Zmiana kursu z 21 sesji minus zmiana WIG w tym samym czasie (punkty procentowe)." },
+  { field: "rs_3m", title: "Siła 3 mies.", group: "tech", hozAlign: "right", formatter: ppFmt, sorter: numSort,
+    headerTooltip: "Zmiana kursu z 63 sesji minus zmiana WIG w tym samym czasie (punkty procentowe)." },
+  { field: "mom", title: "Momentum 3–6 mies.", group: "tech", hozAlign: "right", formatter: pct, sorter: numSort,
+    headerTooltip: "Średnia zmiana kursu z 3 i 6 miesięcy (63 i 126 sesji). Ranking w zakładce Trendy." },
+  { field: "new_high52", title: "52 tyg.", group: "tech", hozAlign: "center", width: 80, sorter: "boolean",
+    formatter: (c) => c.getValue() ? `<span class="sig up">maks.</span>` : c.getRow().getData().new_low52 ? `<span class="sig down">min.</span>` : "",
+    headerTooltip: "Dziś nowe maksimum (lub minimum) z 52 tygodni." },
   { field: "cz", title: "C/Z", group: "val", hozAlign: "right", formatter: ratio, sorter: numSort },
   { field: "cwk", title: "C/WK", group: "val", hozAlign: "right", formatter: ratio, sorter: numSort },
   { field: "evebitda", title: "EV/EBITDA", group: "val", hozAlign: "right", formatter: ratio, sorter: numSort },
@@ -1185,9 +1203,11 @@ $("#pfBody").addEventListener("click", async (e) => {
 /* ---------- sesja dziś ---------- */
 let sesPref = { min: 100000, min_nc: 30000, market: "", watch: "", sessions: 1 }, sesTimer = null;
 const SIG_LABEL = { insider_buy: "kupno", insider_sell: "sprzedaż", wezwanie: "wezwanie", skup: "skup", exdiv: "dywidenda",
-  move_up: "wzrost", move_down: "spadek", volume: "obrót", press_up: "akumulacja", press_down: "dystrybucja", transfer: "przesunięcie" };
+  move_up: "wzrost", move_down: "spadek", volume: "obrót", press_up: "akumulacja", press_down: "dystrybucja", transfer: "przesunięcie",
+  breakout: "wybicie", gap_up: "luka ▲", gap_down: "luka ▼", rs: "siła vs WIG", espi_umowa: "umowa", espi_wyniki: "wyniki", espi_emisja: "emisja" };
 const SIG_TONE = { insider_buy: "up", move_up: "up", press_up: "up", insider_sell: "down", move_down: "down", press_down: "down",
-  wezwanie: "warn", volume: "warn", exdiv: "info", skup: "info", transfer: "info" };
+  wezwanie: "warn", volume: "warn", exdiv: "info", skup: "info", transfer: "info", breakout: "up", gap_up: "up", gap_down: "down",
+  rs: "up", espi_umowa: "info", espi_wyniki: "info", espi_emisja: "warn" };
 // definicje sygnałów (te same progi co w gpwt/session.py) - pokazywane w dymku pod konkretnym opisem
 const SIG_HELP = {
   move_up: "Wzrost: zmiana kursu co najmniej +5% (w dniu odcięcia dywidendy - po jej doliczeniu) przy obrocie co najmniej 2× wyższym od średniej z 20 sesji.",
@@ -1201,6 +1221,13 @@ const SIG_HELP = {
   wezwanie: "Wezwanie do zapisywania się na sprzedaż akcji - zwykle po stałej cenie, często z premią.",
   skup: "Skup akcji własnych przez spółkę.",
   transfer: "Przesunięcie: kupno i sprzedaż między powiązanymi podmiotami (np. do fundacji rodzinnej) - saldo ok. zera.",
+  breakout: "Wybicie: kurs (lub maksimum dnia) powyżej najwyższego poziomu z 52 tygodni albo z 3 miesięcy, przy obrocie co najmniej 2× wyższym od średniej z 20 sesji. Jeden z niewielu krótkoterminowych sygnałów, które statystycznie mają znaczenie.",
+  gap_up: "Luka wzrostowa: otwarcie co najmniej 1% powyżej maksimum poprzedniej sesji. Domknięta = kurs w trakcie dnia wrócił do poziomu wczorajszego maksimum (słabszy sygnał).",
+  gap_down: "Luka spadkowa: otwarcie co najmniej 1% poniżej minimum poprzedniej sesji. Domknięta = kurs w trakcie dnia wrócił do wczorajszego minimum.",
+  rs: "Siła względna: spółka rośnie co najmniej 2%, gdy WIG spada o 0,5% lub więcej - popyt niezależny od rynku.",
+  espi_umowa: "Komunikat o umowie, kontrakcie, zamówieniu lub porozumieniu (słowa kluczowe w tytule).",
+  espi_wyniki: "Komunikat z szacunkowymi lub wstępnymi wynikami albo prognozą (słowa kluczowe w tytule).",
+  espi_emisja: "Komunikat o emisji akcji, ofercie publicznej lub podwyższeniu kapitału - możliwe rozwodnienie.",
 };
 const sigTitle = (s) => `${s.text}${SIG_HELP[s.kind] ? "\n\n" + SIG_HELP[s.kind] : ""}`;
 const sigChips = (sigs) => (sigs || []).map((s) =>
@@ -1293,12 +1320,78 @@ function renderSession(d) {
       <div class="scard"><h2>Najmocniej rosną</h2>${moversTable(d.gainers, "Żadna płynna spółka nie rośnie.")}</div>
       <div class="scard"><h2>Najmocniej spadają</h2>${moversTable(d.losers, "Żadna płynna spółka nie spada.")}</div>
     </div>
+    ${shortTermCard(d)}
     <div class="scard"><h2>Skoki obrotu <span class="dim">– co najmniej 2× średniej z 20 sesji</span></h2>${moversTable(d.spikes, "Brak spółek z wyraźnie wyższym obrotem.")}</div>
     <div class="scard"><div class="scard-head"><h2>Insiderzy i duzi akcjonariusze <span class="dim">– suma na spółkę w oknie</span></h2>${winSeg}</div>
       <p class="dim small">Zakupy zarządu działają z opóźnieniem i liczy się ich seria – w dłuższym oknie widać, kto kupuje regularnie.</p>${series}${holders}</div>
     ${d.exdiv.length ? `<div class="scard"><h2>Dzień odcięcia dywidendy</h2><p class="dim small">Kurs spada o wartość dywidendy, bo kupujący dziś już jej nie dostaną – w zestawieniach liczymy zmianę po jej doliczeniu.</p>${moversTable(d.exdiv, "")}</div>` : ""}
     <div class="scard"><h2>Wezwania, skup akcji, listy akcjonariuszy z walnych</h2>${imp}</div>`;
 }
+
+/* sygnały krótkoterminowe (dni–tygodnie) */
+const TAG_LABEL = { umowa: "umowa / kontrakt", wyniki: "wyniki szacunkowe", skup: "skup akcji", wezwanie: "wezwanie", emisja: "emisja akcji", dywidenda: "dywidenda", wz: "walne zgromadzenie" };
+let sesTag = "";
+function shortTermCard(d) {
+  const gapCell = (x) => x.gap ? `<span class="${x.gap.dir === "up" ? "up" : "down"}">${x.gap.size > 0 ? "+" : ""}${fmtNum(x.gap.size, 1)}%</span> <span class="dim">${x.gap.filled ? "domknięta" : "niedomknięta"}</span>` : "";
+  const gaps = d.gaps.length ? `<table class="stable"><thead><tr><th>Spółka</th><th class="n">Luka</th><th class="n">Zmiana</th><th class="n">× śr.</th></tr></thead><tbody>
+      ${d.gaps.map((x) => `<tr><td>${tk(x.ticker)} <span class="dim nm">${esc(x.name)}</span></td><td class="n">${gapCell(x)}</td><td class="n">${chgCell(x)}</td><td class="n">${ratioCell(x.ratio)}</td></tr>`).join("")}</tbody></table>`
+    : `<p class="dim">Brak luk co najmniej 1% wśród płynnych spółek.</p>`;
+  const wig = d.wig_chg;
+  const rsTitle = wig == null ? "Siła względna wobec WIG" : wig <= -0.5 ? `Rosną w spadkowy dzień (WIG ${fmtNum(wig, 2)}%)` : wig >= 0.5 ? `Najsłabsze w rosnący dzień (WIG +${fmtNum(wig, 2)}%)` : `Siła względna wobec WIG (WIG ${wig > 0 ? "+" : ""}${fmtNum(wig, 2)}%)`;
+  const rsList = wig != null && wig >= 0.5 ? d.rs_bottom : d.rs_top;
+  const rs = rsList.length ? `<table class="stable"><thead><tr><th>Spółka</th><th class="n">Zmiana</th><th class="n" title="Zmiana kursu minus zmiana WIG">vs WIG</th><th class="n">Obrót</th></tr></thead><tbody>
+      ${rsList.map((x) => `<tr><td>${tk(x.ticker)} <span class="dim nm">${esc(x.name)}</span></td><td class="n">${chgCell(x)}</td><td class="n">${signed(x.rs_day, 1, " pp")}</td><td class="n">${fmtMoney(x.turnover)}</td></tr>`).join("")}</tbody></table>` : `<p class="dim">Brak danych WIG z dzisiejszej sesji.</p>`;
+  const tags = d.espi.tagged.filter((e) => !sesTag || e.tags.includes(sesTag));
+  const tagSeg = `<div class="seg sm" role="group" aria-label="Rodzaj komunikatu" id="sesTags"><button data-tag="" aria-pressed="${!sesTag}">wszystkie</button>${Object.entries(TAG_LABEL).filter(([k]) => d.espi.tagged.some((e) => e.tags.includes(k))).map(([k, l]) => `<button data-tag="${k}" aria-pressed="${sesTag === k}">${l}</button>`).join("")}</div>`;
+  const espiList = tags.length ? `<ul class="esp">${tags.map((e) => `<li>${e.tags.map((t) => `<span class="tag kw-${t}">${TAG_LABEL[t]}</span>`).join(" ")}
+      ${e.ticker ? tk(e.ticker) : ""} ${esc(e.title)} <span class="dim">${esc(e.ts.slice(11, 16))}</span>${e.chg == null ? "" : ` · ${signed(e.chg)}`}</li>`).join("")}</ul>` : `<p class="dim">Brak komunikatów z tymi słowami kluczowymi.</p>`;
+  return `<div class="scard"><h2>Sygnały krótkoterminowe <span class="dim">– dni–tygodnie, wśród płynnych spółek</span></h2>
+      <h3 class="sub" title="${esc(SIG_HELP.breakout)}">Wybicia do nowych maksimów przy obrocie ≥2×</h3>${moversTable(d.breakouts, "Dziś brak wybić przy wysokim obrocie.")}
+      <div class="mcols"><div><h3 class="sub" title="${esc(SIG_HELP.gap_up)}">Luki cenowe</h3>${gaps}</div>
+        <div><h3 class="sub" title="${esc(SIG_HELP.rs)}">${rsTitle}</h3>${rs}</div></div>
+      <div class="scard-head"><h3 class="sub">Komunikaty ze słowami kluczowymi <span class="dim">– od ${esc(d.since.slice(11))} ${esc(dd(d.since.slice(0, 10)))}</span></h3>${tagSeg}</div>${espiList}</div>`;
+}
+
+/* ---------- trendy (średni termin) ---------- */
+let trPref = { min: 100000, min_nc: 30000, trend: true, days: 365 };
+try { trPref = { ...trPref, ...JSON.parse(localStorage.getItem("gpwt_trends") || "{}") }; } catch { /* brak pamięci */ }
+async function loadTrends() {
+  $("#trMin").value = String(trPref.min); $("#trMinNc").value = String(trPref.min_nc);
+  $("#trTrend").checked = trPref.trend; $("#trDays").value = String(trPref.days);
+  loadMarket().then((m) => renderMarketStrip($("#trMarket"), m)).catch(() => {});
+  const d = await api(`/api/trends?${new URLSearchParams({ min: trPref.min, min_nc: trPref.min_nc, trend: trPref.trend ? 1 : 0, days: trPref.days })}`);
+  $("#trAsOf").textContent = d.date ? `sesja ${dd(d.date)} · historia ${d.sessions} sesji` : "";
+  const W = d.wig;
+  const mom = d.momentum.length ? `<table class="stable"><thead><tr><th>#</th><th>Spółka</th><th>Sektor</th><th class="n">Momentum</th><th class="n">3 mies.</th><th class="n">6 mies.</th>
+      <th class="n" title="3 miesiące minus WIG">vs WIG 3 mies.</th><th class="n">vs SMA200</th><th class="n">1 mies.</th><th></th></tr></thead><tbody>
+      ${d.momentum.map((x, i) => `<tr><td class="dim">${i + 1}</td><td>${tk(x.ticker)} <span class="dim nm">${esc(x.name)}</span></td><td class="dim">${esc(x.sector || "")}</td>
+        <td class="n"><b>${signed(x.mom, 1)}</b></td><td class="n">${signed(x.ret_3m, 1)}</td><td class="n">${signed(x.ret_6m, 1)}</td>
+        <td class="n">${signed(x.rs_3m, 1, " pp")}</td><td class="n">${signed(x.vs200, 1)}</td><td class="n">${signed(x.ret_1m, 1)}</td>
+        <td>${x.new_high52 ? `<span class="sig up">maks. 52 tyg.</span>` : ""}${x.ret_1m != null && x.ret_1m < -10 ? ` <span class="sig warn" title="Ostatni miesiąc słaby mimo dobrego 3–6 mies.">słabnie</span>` : ""}</td></tr>`).join("")}</tbody></table>
+      <p class="dim small">${d.n_momentum} spółek spełnia warunki${d.trend_only ? " (SMA50 nad SMA200 i kurs nad SMA200)" : ""}. Momentum = średnia zmiana z 3 i 6 miesięcy. WIG w tym czasie: 3 mies. ${signed(W.ret_3m, 1)}, 6 mies. ${signed(W.ret_6m, 1)}. Badania pokazują, że momentum z 3–12 miesięcy ma tendencję do utrzymywania się, ale gwałtownie odwraca się w okresach paniki.</p>`
+    : `<p class="dim">Za krótka historia notowań albo żadna spółka nie spełnia warunków.</p>`;
+  const sec = d.sectors.length ? `<table class="stable"><thead><tr><th>Sektor</th><th class="n">Spółek</th><th class="n">1 mies.</th><th class="n">vs WIG 1 mies.</th>
+      <th class="n">3 mies.</th><th class="n">vs WIG 3 mies.</th><th class="n" title="Odsetek spółek sektora nad średnią z 200 sesji">nad SMA200</th><th>Liderzy miesiąca</th></tr></thead><tbody>
+      ${d.sectors.map((r) => `<tr><td>${esc(r.sector)}</td><td class="n">${r.n}</td><td class="n">${signed(r.ret_1m, 1)}</td><td class="n"><b>${signed(r.rs_1m, 1, " pp")}</b></td>
+        <td class="n">${signed(r.ret_3m, 1)}</td><td class="n">${signed(r.rs_3m, 1, " pp")}</td><td class="n">${r.above200 == null ? "" : fmtNum(r.above200, 0) + "%"}</td>
+        <td>${r.leaders.map(tk).join(" ")}</td></tr>`).join("")}</tbody></table>
+      <p class="dim small">Zmiany ważone kapitalizacją spółek z obrotem od 20 tys. zł; sektory z co najmniej 3 spółkami. WIG: 1 mies. ${signed(W.ret_1m, 1)}, 3 mies. ${signed(W.ret_3m, 1)}.</p>` : "";
+  const fundTable = (rows) => rows.length ? `<table class="stable"><thead><tr><th>Spółka</th><th class="n" title="Liczba funduszy, które zwiększyły udział">Zwiększyło</th><th class="n">Zmniejszyło</th>
+      <th class="n">Saldo</th><th class="n" title="Saldo jako % kapitalizacji">% kap.</th><th class="n">3 mies.</th><th>Trend</th><th>Ostatnia zmiana</th></tr></thead><tbody>
+      ${rows.map((r) => `<tr><td>${tk(r.ticker)} <span class="dim nm">${esc(r.name || "")}</span></td><td class="n up">${r.funds_up || ""}</td><td class="n down">${r.funds_down || ""}</td>
+        <td class="n">${signedMoney(r.value || null)}${r.unpriced ? ` <span class="dim" title="Część zmian bez wyceny">*</span>` : ""}</td><td class="n">${r.value_pct_mcap == null ? "" : signed(r.value_pct_mcap, 2)}</td>
+        <td class="n">${signed(r.ret_3m, 1)}</td><td>${r.trend == null ? "" : r.trend ? `<span class="up">▲</span>` : `<span class="down">▼</span>`}</td><td class="dim">${dd(r.last)}</td></tr>`).join("")}</tbody></table>` : `<p class="dim">Brak.</p>`;
+  $("#trBody").innerHTML = `<div class="scard"><h2>Momentum 3–6 miesięcy ${d.trend_only ? `<span class="dim">– w trendzie wzrostowym</span>` : ""}</h2>${mom}</div>
+    <div class="scard"><h2>Rotacja sektorowa <span class="dim">– kto od miesiąca wygrywa z WIG</span></h2>${sec}</div>
+    <div class="mcols"><div class="scard"><h2>Fundusze zwiększają udziały</h2>${fundTable(d.funds_buy)}</div>
+      <div class="scard"><h2>Fundusze zmniejszają udziały</h2>${fundTable(d.funds_sell)}</div></div>
+    <p class="dim small">Fundusze: OFE (struktury portfeli co pół roku), TFI i inne fundusze z zawiadomień art. 69 i akcjonariatu, z wybranego okresu. Liczy się, ile różnych funduszy działa w tym samym kierunku.</p>`;
+}
+const saveTrPref = () => { try { localStorage.setItem("gpwt_trends", JSON.stringify(trPref)); } catch { /* brak pamięci */ } loadTrends(); };
+$("#trMin").addEventListener("change", (e) => { trPref.min = +e.target.value; saveTrPref(); });
+$("#trMinNc").addEventListener("change", (e) => { trPref.min_nc = +e.target.value; saveTrPref(); });
+$("#trTrend").addEventListener("change", (e) => { trPref.trend = e.target.checked; saveTrPref(); });
+$("#trDays").addEventListener("change", (e) => { trPref.days = +e.target.value; saveTrPref(); });
 
 async function loadSession() {
   const p = await api("/api/settings/session");
@@ -1326,6 +1419,8 @@ const saveSesPref = () => { api("/api/settings/session", { method: "PUT", body: 
 $("#sesMin").addEventListener("change", (e) => { sesPref.min = +e.target.value; saveSesPref(); });
 $("#sesMinNc").addEventListener("change", (e) => { sesPref.min_nc = +e.target.value; saveSesPref(); });
 $("#sesBody").addEventListener("click", (e) => {
+  const tg = e.target.closest("#sesTags button");
+  if (tg) { sesTag = tg.dataset.tag; refreshSession(); return; }
   const b = e.target.closest("#sesWin button"); if (!b) return;
   sesPref.sessions = +b.dataset.ses; saveSesPref();
 });
@@ -1342,7 +1437,7 @@ $("#sesRefresh").addEventListener("click", async () => {
 });
 
 /* ---------- nawigacja ---------- */
-const loaders = { portfolio: loadPortfolio, session: loadSession, companies: loadCompanies, investors: loadInvestors, changes: loadChanges, espi: loadEspi, settings: loadSettings };
+const loaders = { portfolio: loadPortfolio, session: loadSession, trends: loadTrends, companies: loadCompanies, investors: loadInvestors, changes: loadChanges, espi: loadEspi, settings: loadSettings };
 const loaded = {};
 let current = "portfolio";
 function showView(v) {
