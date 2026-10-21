@@ -358,3 +358,9 @@ h3.sub { font-size: 14px; margin: 14px 0 6px; }
 .tag.kw-dywidenda { color: var(--gain); border-color: var(--gain); }
 #view-trends .mcols { margin: 0; }
 #view-trends .mcols > .scard { margin-bottom: 12px; }
+
+/* ---- kalendarz ---- */
+.stable.cal td.cal-d { width: 78px; white-space: nowrap; }
+.cal-e { padding: 2px 0; font-family: "IBM Plex Sans", sans-serif; font-size: 13.5px; }
+.cal-e.held { font-weight: 600; }
+.cal-e .sig { min-width: 64px; text-align: center; }

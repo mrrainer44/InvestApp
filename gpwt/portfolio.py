@@ -235,7 +235,15 @@ def summary(con, portfolio_id=None):
         "wig_date": wig_last, "portfolio_id": portfolio_id, "portfolios": breakdown,
         "totals": _totals(rows, closed), "positions": rows, "alerts": alerts, "closed": closed,
         "dividends": _dividend_calendar(con, rows, today),
+        "events": _events(con, rows),
     }
+
+
+def _events(con, rows):
+    """Wydarzenia z kalendarza (30 dni) dla posiadanych spółek: raporty, WZ, wezwania, dywidendy."""
+    from . import kalendarz
+    held = {r["ticker"] for r in rows}
+    return [e for e in kalendarz.events(con, 30)["events"] if e["ticker"] in held]
 
 
 def _alerts(con, rows, prev, today):
@@ -299,6 +307,11 @@ def _alerts(con, rows, prev, today):
             amount = f"{d['dps'] * qty[d['ticker']]:,.0f}".replace(",", " ")
             add(d["ticker"], "info", "dividend", f"Ostatni dzień z prawem do dywidendy {d['dps']:.2f} zł: "
                                                  f"{d['last_day']}, dla Ciebie ok. {amount} zł brutto")
+    from . import ostrzezenia as gwarn
+    warn = gwarn.compute(con)
+    for t in tickers:
+        for w in warn.get(t, []):
+            add(t, "warn" if w["level"] == "warn" else "info", f"warn_{w['kind']}", "Ostrzeżenie: " + w["text"])
     rank = {"critical": 0, "warn": 1, "info": 2}
     out.sort(key=lambda a: (rank[a["level"]], a["ticker"]))
     return out

@@ -64,6 +64,8 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc
                         ).fetchone()[0]
     avg = _avg_turnover(con, day)
     cmf = pressure.all_cmf(con)
+    from . import ostrzezenia as gwarn
+    warn = gwarn.compute(con)
     tech_all = technicals.compute(con)
     tech, wig_chg = tech_all["rows"], tech_all["wig"].get("chg")
     exdiv = {}
@@ -173,6 +175,9 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc
 
     def signals(x):
         s = list(events.get(x["ticker"], []))
+        for w in warn.get(x["ticker"], []):
+            if w["kind"] != "skrajne":
+                s.append({"kind": f"warn_{w['kind']}", "text": w["text"]})
         if x.get("breakout") and (x["ratio"] or 0) >= 2:
             s.append({"kind": "breakout", "text": f"Wybicie do nowego maksimum z {'52 tygodni' if x['breakout'] == '52' else '3 miesięcy'}"
                                                   f" przy obrocie {x['ratio']:.1f}x średniej"})
@@ -243,6 +248,8 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc
                  "tagged": [{**e, "chg": by[e["ticker"]]["chg_eff"] if e["ticker"] in by else None}
                             for e in espi_rows if e["tags"]][:60]},
         "breakouts": [pub(x) for x in breakouts[:top]], "gaps": [pub(x) for x in gaps[:top]],
+        "warned": [pub(x) for x in sorted((x for x in liquid if any(w["kind"] != "skrajne" for w in warn.get(x["ticker"], []))),
+                                          key=lambda x: -(x["turnover"] or 0))][:20],
         "rs_top": [pub(x) for x in rs[:8]], "rs_bottom": [pub(x) for x in rs[-8:][::-1]], "wig_chg": wig_chg,
         "watch": watch,
         "watch_columns": [dict(r) for r in con.execute("SELECT key, label, type FROM custom_columns ORDER BY label")],

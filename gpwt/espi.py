@@ -19,6 +19,13 @@ log = logging.getLogger("gpwt.espi")
 TITLE_RE = re.compile(r"^(.*?)\s*\((\d+/\d{4})\)\s*(.*)$")
 
 _RULES = [
+    # do kalendarza: harmonogramy raportów okresowych i zwołania walnych zgromadzeń
+    ("terminy", r"termin\w*\s+(przekazywania|publikacji|przekazania)\s+raport|harmonogram\w*\s+(publikacji|przekazywania)"
+                r"\s+raport|zmian\w*\s+(harmonogramu|termin\w*).{0,40}raport\w*\s+(okresow|kwartaln|p[oó][lł]roczn|roczn)|"
+                r"financial\s+calendar|dates?\s+of\s+(publication|periodic)"),
+    ("wz_zwolanie", r"zwo[lł]ani\w*.{0,60}walne\w*\s+zgromadz|og[lł]oszeni\w*\s+o\s+zwo[lł]aniu|"
+                    r"zwo[lł]uj\w*.{0,40}walne|notice\s+of\s+(the\s+)?(annual\s+|extraordinary\s+)?general\s+meeting|"
+                    r"convening\s+(notice|of)"),
     ("wz_lista", r"(wykaz|lista)\s+akcjonariusz\w*.*(5|pi[eę][cć])\s*%"),
     ("wz_lista", r"(wykaz|lista)\s+akcjonariusz\w*.*walnym"),
     ("mar", r"art\.?\s*19\b|\bMAR\b|obowi[aą]zki zarz[aą]dcze|blisko zwi[aą]zan|"
@@ -387,6 +394,83 @@ def parse_mar_en(text):
         res["side"] = -1
     if res.get("volume") and res.get("side"):
         res["delta"] = res["side"] * res["volume"]
+    return res
+
+
+# ---------------- daty do kalendarza ----------------
+
+_DATE = re.compile(r"(\d{1,2})\s*[.\-/]\s*(\d{1,2})\s*[.\-/]\s*(20\d\d)|(20\d\d)-(\d{2})-(\d{2})|"
+                   r"(\d{1,2})\s+([a-ząćęłńóśźż]{3,12})\s+(20\d\d)", re.I)
+_REPORT_KIND = re.compile(
+    r"(?P<q3>\bIII\s*kw|\b3\s*\.?\s*kw|trzeci\w*\s+kw|\bQ3\b|third\s+quarter)|"
+    r"(?P<q1>\bI\s+kw|\b1\s*\.?\s*kw|pierwsz\w*\s+kw|\bQ1\b|first\s+quarter)|"
+    r"(?P<q2>\bII\s+kw|\b2\s*\.?\s*kw|drugi\w*\s+kw|\bQ2\b|second\s+quarter)|"
+    r"(?P<q4>\bIV\s+kw|\b4\s*\.?\s*kw|czwart\w*\s+kw|\bQ4\b|fourth\s+quarter)|"
+    r"(?P<h1>p[oó][lł]roczn|p[oó][lł]rocz|half-?\s?year|semi-?annual|\bH1\b)|"
+    r"(?P<y>(?<![oó][lł])roczn\w*|za\s+(rok\s+)?(obrotowy\s+)?20\d\d(?!\s*r\w*\s*\.?\s*[-–]?\s*\d)|annual)", re.I)
+REPORT_LABEL = {"q1": "raport za I kwartał", "q2": "raport za II kwartał", "q3": "raport za III kwartał",
+                "q4": "raport za IV kwartał", "h1": "raport półroczny", "y": "raport roczny"}
+
+
+def _dates_in(s):
+    from .util import any_date
+    out = []
+    for m in _DATE.finditer(s):
+        d = any_date(m.group(0))
+        if d:
+            out.append((m.start(), d))
+    return out
+
+
+def parse_report_dates(text, title=""):
+    """Harmonogram raportów okresowych: {rodzaj: data}. Dla każdego rodzaju raportu (I/III kwartał, półrocze, rok)
+    bierzemy datę stojącą po nim, zanim zacznie się opis kolejnego raportu. W "zmianie harmonogramu" (stary i nowy
+    termin w jednym zdaniu) - ostatnią datę."""
+    t = re.sub(r"\s+", " ", text or "")
+    k = re.search(r"Tre[sś][cć] raportu:?|Contents of the report:?", t)
+    if k:
+        t = t[k.end():]
+    t = re.split(r"Nazwa arkusza|Podstawa prawna:|Szczeg[oó][lł]owa podstawa prawna|Legal basis", t)[0]
+    change = bool(re.search(r"zmian|change", title or "", re.I))
+    marks = list(_REPORT_KIND.finditer(t))
+    out = {}
+    for i, m in enumerate(marks):
+        kind = m.lastgroup
+        end = min(marks[i + 1].start() if i + 1 < len(marks) else len(t), m.end() + 220)
+        window = t[m.end():end]
+        ds = [d for _, d in _dates_in(window) if d[:4] >= "2025"]
+        if not ds:
+            continue
+        d = ds[-1] if change else ds[0]
+        out[kind] = min(out[kind], d) if kind in out and not change else d
+    return out
+
+
+def parse_meeting_date(text, published=""):
+    """Data walnego zgromadzenia ze zwołania: pierwsza data po "na dzień"/"zwołuje"/"odbędzie się", nie wcześniejsza
+    niż publikacja."""
+    t = re.sub(r"\s+", " ", text or "")
+    for m in re.finditer(r"(na\s+dzie[nń]|zwo[lł]uj\w*|odb[eę]dzie\s+si[eę]|w\s+dniu|to\s+be\s+held\s+on|on)\D{0,80}", t, re.I):
+        ds = _dates_in(t[m.start(): m.end() + 40])
+        for _, d in ds:
+            if not published or d >= published[:10]:
+                return d
+    return None
+
+
+def parse_tender(text):
+    """Wezwanie: daty przyjmowania zapisów i cena."""
+    t = re.sub(r"\s+", " ", text or "")
+    res = {}
+    for key, pat in (("start", r"rozpocz[eę]ci\w*\s+przyjmowania\s+zapis"), ("end", r"zako[nń]czeni\w*\s+przyjmowania\s+zapis")):
+        m = re.search(pat, t, re.I)
+        if m:
+            ds = _dates_in(t[m.end(): m.end() + 120])
+            if ds:
+                res[key] = ds[0][1]
+    m = re.search(r"cen\w*[^.]{0,80}?(\d+[.,]\d{2})\s*(z[lł]|PLN)", t, re.I)
+    if m:
+        res["price"] = num(m.group(1))
     return res
 
 

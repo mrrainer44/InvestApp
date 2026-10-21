@@ -35,6 +35,12 @@ const money = (cell) => fmtMoney(cell.getValue());
 const ratio = (cell) => { const v = cell.getValue(); if (v == null) return "";
   return v < 0 ? `<span class="dim">${fmtNum(v, 1)}</span>` : fmtNum(v, 1); };
 const yesno = (cell) => cell.getValue() ? "tak" : `<span class="dim">nie</span>`;
+const WARN_SHORT = { emisja: "emisja", sprzedaz: "sprzedaż po wzroście", raport: "brak raportu", raport_opozniony: "opóźniony raport", skrajne: "NC: skrajne" };
+const warnRank = (v) => (v || []).reduce((s, w) => s + (w.level === "warn" ? 10 : 1), 0);
+const warnFmt = (cell) => { const v = cell.getValue() || []; if (!v.length) return "";
+  const main = v.filter((w) => w.level === "warn"), tip = esc(v.map((w) => "• " + w.text).join("\n"));
+  return main.length ? `<span class="sig warn" title="${tip}">⚠ ${esc(WARN_SHORT[main[0].kind] || main[0].kind)}${main.length > 1 ? " +" + (main.length - 1) : ""}</span>`
+    : `<span class="sig" title="${tip}">${esc(WARN_SHORT[v[0].kind] || v[0].kind)}</span>`; };
 const pfColFmt = (cell) => { const v = cell.getValue(), q = cell.getRow().getData().pf_qty;
   return v ? v.split(", ").map((n) => `<span class="pf-tag" title="${fmtNum(q, 0)} akcji w portfelach">${esc(n)}</span>`).join(" ") : ""; };
 const tickerFmt = (cell) => `<a class="tk" href="#" data-t="${esc(cell.getValue())}">${esc(cell.getValue())}</a>`;
@@ -80,6 +86,10 @@ const afFmt = (cell) => cell.getValue()
 const BUILTIN = [
   { field: "ticker", title: "Ticker", group: "base", frozen: true, formatter: tickerFmt, headerFilter: "input", width: 86 },
   { field: "name", title: "Spółka", group: "base", headerFilter: "input", width: 190 },
+  { field: "warnings", title: "Ostrzeżenia", group: "base", width: 120, formatter: warnFmt, sorter: (a, b) => warnRank(a) - warnRank(b),
+    headerTooltip: "Nie dotykaj bez sprawdzenia: emisja akcji (60 dni), sprzedaż dużych akcjonariuszy lub insiderów po dużym wzroście, brak lub opóźnienie raportu okresowego, a na NewConnect skrajne wskaźniki (C/WK > 20, ujemna EBITDA, kapitalizacja < 20 mln zł). Szczegóły w dymku.",
+    headerFilter: "list", headerFilterParams: { values: { warn: "ważne ostrzeżenia", any: "dowolne", none: "bez ostrzeżeń" }, clearable: true },
+    headerFilterFunc: (h, v) => h === "none" ? !v : h === "any" ? !!v : (v || []).some((w) => w.level === "warn") },
   { field: "pf", title: "W portfelu", group: "base", width: 130, formatter: pfColFmt, sorter: "string",
     headerTooltip: "Spółka ma otwartą pozycję w zakładce Moje spółki (nazwa portfela). Aktualizuje się po każdym zakupie i sprzedaży.",
     headerFilter: "tickCross", headerFilterParams: { tristate: true }, headerFilterFunc: (h, v) => h === null || h === !!v },
@@ -1075,6 +1085,7 @@ function renderPortfolio(d) {
   $("#pfBody").innerHTML = `${pfTabs(d)}${kpi}${breakdown}
     <div class="scard"><h2>Alerty</h2>${alerts}</div>
     <div class="scard"><h2>Pozycje</h2>${table}</div>
+    ${calendarCard({ from: today(), to: new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), events: d.events || [], schedules: 0, rpp_year_known: true }, 30, { onlyHeld: true, title: "Wydarzenia Twoich spółek – 30 dni" })}
     <div class="scard"><h2>Kalendarz dywidend</h2>${divs}</div>
     ${closed ? `<div class="scard">${closed}</div>` : ""}`;
 }
@@ -1204,10 +1215,12 @@ $("#pfBody").addEventListener("click", async (e) => {
 let sesPref = { min: 100000, min_nc: 30000, market: "", watch: "", sessions: 1 }, sesTimer = null;
 const SIG_LABEL = { insider_buy: "kupno", insider_sell: "sprzedaż", wezwanie: "wezwanie", skup: "skup", exdiv: "dywidenda",
   move_up: "wzrost", move_down: "spadek", volume: "obrót", press_up: "akumulacja", press_down: "dystrybucja", transfer: "przesunięcie",
-  breakout: "wybicie", gap_up: "luka ▲", gap_down: "luka ▼", rs: "siła vs WIG", espi_umowa: "umowa", espi_wyniki: "wyniki", espi_emisja: "emisja" };
+  breakout: "wybicie", gap_up: "luka ▲", gap_down: "luka ▼", rs: "siła vs WIG", espi_umowa: "umowa", espi_wyniki: "wyniki", espi_emisja: "emisja",
+  warn_emisja: "⚠ emisja", warn_sprzedaz: "⚠ sprzedaż po wzroście", warn_raport: "⚠ brak raportu", warn_raport_opozniony: "⚠ opóźniony raport" };
 const SIG_TONE = { insider_buy: "up", move_up: "up", press_up: "up", insider_sell: "down", move_down: "down", press_down: "down",
   wezwanie: "warn", volume: "warn", exdiv: "info", skup: "info", transfer: "info", breakout: "up", gap_up: "up", gap_down: "down",
-  rs: "up", espi_umowa: "info", espi_wyniki: "info", espi_emisja: "warn" };
+  rs: "up", espi_umowa: "info", espi_wyniki: "info", espi_emisja: "warn",
+  warn_emisja: "down", warn_sprzedaz: "down", warn_raport: "down", warn_raport_opozniony: "down" };
 // definicje sygnałów (te same progi co w gpwt/session.py) - pokazywane w dymku pod konkretnym opisem
 const SIG_HELP = {
   move_up: "Wzrost: zmiana kursu co najmniej +5% (w dniu odcięcia dywidendy - po jej doliczeniu) przy obrocie co najmniej 2× wyższym od średniej z 20 sesji.",
@@ -1228,6 +1241,10 @@ const SIG_HELP = {
   espi_umowa: "Komunikat o umowie, kontrakcie, zamówieniu lub porozumieniu (słowa kluczowe w tytule).",
   espi_wyniki: "Komunikat z szacunkowymi lub wstępnymi wynikami albo prognozą (słowa kluczowe w tytule).",
   espi_emisja: "Komunikat o emisji akcji, ofercie publicznej lub podwyższeniu kapitału - możliwe rozwodnienie.",
+  warn_emisja: "Nie dotykaj bez sprawdzenia: emisja akcji lub podwyższenie kapitału w ostatnich 60 dniach - nowe akcje rozwadniają udział i często trafiają na rynek.",
+  warn_sprzedaz: "Nie dotykaj bez sprawdzenia: duży akcjonariusz (art. 69) lub insider sprzedaje w ostatnich 30 dniach po wzroście kursu (3 mies. ≥ +30% albo miesiąc ≥ +20%).",
+  warn_raport: "Nie dotykaj bez sprawdzenia: minął ustawowy termin raportu, a najnowsze dane finansowe są o co najmniej 2 kwartały starsze i w komunikatach nie widać nowego raportu.",
+  warn_raport_opozniony: "Nie dotykaj bez sprawdzenia: minęła data raportu z harmonogramu spółki, a raportu nie widać w komunikatach (NewConnect).",
 };
 const sigTitle = (s) => `${s.text}${SIG_HELP[s.kind] ? "\n\n" + SIG_HELP[s.kind] : ""}`;
 const sigChips = (sigs) => (sigs || []).map((s) =>
@@ -1321,11 +1338,35 @@ function renderSession(d) {
       <div class="scard"><h2>Najmocniej spadają</h2>${moversTable(d.losers, "Żadna płynna spółka nie spada.")}</div>
     </div>
     ${shortTermCard(d)}
+    ${calendarCard(calData, 14)}
+    <div class="scard"><h2>Nie dotykaj bez sprawdzenia <span class="dim">– ostrzeżenia wśród płynnych spółek</span></h2>
+      ${d.warned.length ? moversTable(d.warned, "") : `<p class="dim">Brak płynnych spółek z ostrzeżeniami.</p>`}
+      <p class="dim small">Emisja akcji, sprzedaż dużych akcjonariuszy lub insiderów po wzroście, brak lub opóźnienie raportu. Wszystkie spółki z ostrzeżeniami (także NewConnect ze skrajnymi wskaźnikami) – kolumna „Ostrzeżenia” w tabeli Spółki.</p></div>
     <div class="scard"><h2>Skoki obrotu <span class="dim">– co najmniej 2× średniej z 20 sesji</span></h2>${moversTable(d.spikes, "Brak spółek z wyraźnie wyższym obrotem.")}</div>
     <div class="scard"><div class="scard-head"><h2>Insiderzy i duzi akcjonariusze <span class="dim">– suma na spółkę w oknie</span></h2>${winSeg}</div>
       <p class="dim small">Zakupy zarządu działają z opóźnieniem i liczy się ich seria – w dłuższym oknie widać, kto kupuje regularnie.</p>${series}${holders}</div>
     ${d.exdiv.length ? `<div class="scard"><h2>Dzień odcięcia dywidendy</h2><p class="dim small">Kurs spada o wartość dywidendy, bo kupujący dziś już jej nie dostaną – w zestawieniach liczymy zmianę po jej doliczeniu.</p>${moversTable(d.exdiv, "")}</div>` : ""}
     <div class="scard"><h2>Wezwania, skup akcji, listy akcjonariuszy z walnych</h2>${imp}</div>`;
+}
+
+/* kalendarz */
+let calData = null;
+const CAL_KIND = { dywidenda: ["dywidenda", "up"], wyplata: ["wypłata", "up"], raport: ["raport", "info"], raport_termin: ["termin raportów", "info"],
+  wz: ["walne", "info"], wezwanie: ["wezwanie", "warn"], rpp: ["RPP", "warn"], cpi: ["inflacja", "warn"] };
+const DOW = ["nd", "pn", "wt", "śr", "cz", "pt", "sb"];
+function calendarCard(c, days, opts = {}) {
+  if (!c) return "";
+  const ev = c.events.filter((e) => !opts.onlyHeld || e.held);
+  const byDay = {};
+  ev.forEach((e) => (byDay[e.date] ||= []).push(e));
+  const body = Object.keys(byDay).length ? `<table class="stable cal"><tbody>${Object.entries(byDay).map(([d, es]) => `<tr>
+      <td class="cal-d"><b>${d.slice(8, 10)}.${d.slice(5, 7)}</b> <span class="dim">${DOW[new Date(d + "T12:00").getDay()]}</span></td>
+      <td>${es.map((e) => `<div class="cal-e ${e.held ? "held" : ""}" title="${esc([e.detail, e.source && "Źródło: " + e.source].filter(Boolean).join("\n"))}">
+        <span class="sig ${CAL_KIND[e.kind]?.[1] || ""}">${CAL_KIND[e.kind]?.[0] || e.kind}</span>
+        ${e.ticker ? tk(e.ticker) + ` <span class="dim nm">${esc(e.name || "")}</span>` : ""} ${esc(e.title)}${e.held ? ` <span class="pf-tag">w portfelu</span>` : ""}</div>`).join("")}</td></tr>`).join("")}</tbody></table>`
+    : `<p class="dim">${opts.onlyHeld ? "Brak wydarzeń Twoich spółek w tym okresie." : "Brak wydarzeń."}</p>`;
+  return `<div class="scard"><h2>${opts.title || `Kalendarz – ${days} dni`} <span class="dim">– ${dd(c.from)}–${dd(c.to)}</span></h2>${body}
+    ${opts.onlyHeld ? "" : `<p class="dim small">Raporty okresowe z harmonogramów spółek (${c.schedules} spółek z harmonogramem) i ustawowe terminy; walne zgromadzenia i zapisy w wezwaniach z komunikatów; RPP z harmonogramu NBP${c.rpp_year_known ? "" : " (brak harmonogramu na ten rok – do uzupełnienia)"}; inflacja GUS orientacyjnie. Twoje spółki są wyróżnione.</p>`}</div>`;
 }
 
 /* sygnały krótkoterminowe (dni–tygodnie) */
@@ -1413,6 +1454,7 @@ async function refreshSession() {
     `<option value="${esc(c.key)}">${esc(c.label)}</option>`).join("");
   $("#sesWatch").value = sesPref.watch || "";
   try { await loadMarket(); renderMarketStrip($("#sesMarket"), mktData); } catch { /* kontekst rynku niedostępny */ }
+  try { calData = await api("/api/calendar?days=14"); } catch { calData = null; }
   renderSession(d);
 }
 const saveSesPref = () => { api("/api/settings/session", { method: "PUT", body: sesPref }).catch(() => {}); refreshSession(); };

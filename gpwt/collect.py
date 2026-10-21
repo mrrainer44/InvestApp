@@ -204,8 +204,10 @@ class CompanyMatcher:
 
 # ---------------- ESPI ----------------
 
-FETCH_BODY = {"art69", "mar", "wz_lista", "wezwanie"}
-FETCH_PDF = {"art69", "mar"}
+FETCH_BODY = {"art69", "mar", "wz_lista", "wezwanie", "terminy", "wz_zwolanie"}
+FETCH_PDF = {"art69", "mar", "terminy", "wz_zwolanie"}
+# kategorie, dla których brak liczb/dat w treści uzupełniamy załącznikiem z Bankier.pl
+BANKIER_CATS = ("art69", "mar", "terminy", "wz_zwolanie")
 
 
 def collect_espi(con, stats, max_pages=None, since=None):
@@ -278,10 +280,10 @@ def collect_gpw_history(con, stats, since):
 def reparse_espi(con, stats):
     """Ponowny odczyt zapisanej treści raportów art. 69 / MAR po poprawce parsera - bez pobierania z sieci."""
     n = 0
-    for r in con.execute("SELECT id, category, title, body, parsed FROM espi WHERE fetched=1 "
-                         "AND category IN ('art69','mar') AND body IS NOT NULL").fetchall():
+    for r in con.execute("SELECT id, category, title, body, parsed, ts FROM espi WHERE fetched=1 "
+                         "AND category IN ('art69','mar','terminy','wz_zwolanie','wezwanie') AND body IS NOT NULL").fetchall():
         old = json.loads(r["parsed"] or "{}")
-        new = parse_espi_text(r["category"], r["body"], r["title"], [])
+        new = parse_espi_text(r["category"], r["body"], r["title"], [], r["ts"])
         if "bankier" in old:
             new["bankier"] = old["bankier"]
         if new != old:
@@ -295,8 +297,13 @@ def reclassify_other(con, stats):
     """Komunikaty z kategorii "other" sprawdzane ponownie po rozszerzeniu reguł (np. angielskie tytuły)
     - nowe art69/mar trafią do odczytu treści w fetch_espi_details."""
     moved = 0
-    for r in con.execute("SELECT id, title FROM espi WHERE category='other'").fetchall():
+    today = date.today()
+    # do kalendarza wystarczą harmonogramy z bieżącego roku i zwołania walnych z ostatnich 75 dni
+    since = {"terminy": f"{today.year - 1}-12-01", "wz_zwolanie": (today - timedelta(days=75)).isoformat()}
+    for r in con.execute("SELECT id, title, ts FROM espi WHERE category='other'").fetchall():
         cat = espi.classify(r["title"])
+        if cat in since and (r["ts"] or "") < since[cat]:
+            continue
         if cat != "other":
             con.execute("UPDATE espi SET category=?, fetched=0 WHERE id=? AND category='other'", (cat, r["id"]))
             moved += 1
@@ -338,15 +345,16 @@ def fetch_bankier_attachments(con, stats, max_pages=20):
     Każdy raport sprawdzamy raz (parsed.bankier = adres komunikatu albo "brak")."""
     rows = con.execute(
         "SELECT e.id, e.ticker, e.ts, e.title, e.category, e.body, e.parsed, c.short_name, c.market FROM espi e "
-        "JOIN companies c ON c.ticker=e.ticker WHERE e.category IN ('art69','mar') AND e.fetched=1 "
+        f"JOIN companies c ON c.ticker=e.ticker WHERE e.category IN {BANKIER_CATS} AND e.fetched=1 "
         "AND (e.url LIKE 'https://www.gpw.pl/%' OR e.url LIKE 'https://newconnect.pl/%') ORDER BY e.ticker, e.ts DESC"
     ).fetchall()
     todo = {}
     for r in rows:
         p = json.loads(r["parsed"] or "{}")
-        if "bankier" in p or _has_forms(r["parsed"]) or not r["short_name"]:
+        if "bankier" in p or _has_forms(r["parsed"]) or p.get("dates") or p.get("meeting") or not r["short_name"]:
             continue
-        if re.search(r"Spis zalacznikow|Znaleziono \d+ za", r["body"] or ""):
+        # harmonogramy i zwołania z NewConnect są w całości w PDF (strona raportu nie ma treści)
+        if re.search(r"Spis zalacznikow|Znaleziono \d+ za", r["body"] or "") or r["category"] in ("terminy", "wz_zwolanie"):
             todo.setdefault(r["ticker"], []).append(r)
     n_rep = sum(len(v) for v in todo.values())
     if not n_rep:
@@ -375,8 +383,8 @@ def fetch_bankier_attachments(con, stats, max_pages=20):
                 pdf, _ = _pdf_texts(r["id"], bankier.fetch_attachments(m["url"]), tag="bk")
             if pdf:
                 text = (r["body"] or "") + pdf
-                p = parse_espi_text(r["category"], text, r["title"], [])
-                parsed_ok += _has_forms(json.dumps(p))
+                p = parse_espi_text(r["category"], text, r["title"], [], r["ts"])
+                parsed_ok += bool(_has_forms(json.dumps(p)) or p.get("dates") or p.get("meeting"))
                 p["bankier"] = m["url"]
                 con.execute("UPDATE espi SET body=?, parsed=? WHERE id=?",
                             (text[:60000], json.dumps(p, ensure_ascii=False), r["id"]))
@@ -410,7 +418,7 @@ def fetch_espi_details(con, stats):
             pdf, bad = _pdf_texts(row["id"], art["pdfs"])
             text += pdf
             not_pdf += bad
-        parsed = parse_espi_text(row["category"], text, row["title"], art.get("pdfs", []))
+        parsed = parse_espi_text(row["category"], text, row["title"], art.get("pdfs", []), row["ts"])
         if parsed:
             parsed_ok += 1
         con.execute("UPDATE espi SET body=?, parsed=?, fetched=1 WHERE id=?",
@@ -422,7 +430,7 @@ def fetch_espi_details(con, stats):
         stats["espi_not_pdf"] = not_pdf
 
 
-def parse_espi_text(cat, text, title, pdfs):
+def parse_espi_text(cat, text, title, pdfs, ts=""):
     if cat == "art69":
         # Jeden raport może zawierać kilka zawiadomień (kilka PDF) - parsujemy każdy osobno.
         parts = text.split("=== PDF ===")
@@ -438,6 +446,12 @@ def parse_espi_text(cat, text, title, pdfs):
         return {"forms": [f for f in forms if f]}
     if cat == "wz_lista":
         return {"holders": espi.parse_wz_list(text)}
+    if cat == "terminy":
+        return {"dates": espi.parse_report_dates(text, title)}
+    if cat == "wz_zwolanie":
+        return {"meeting": espi.parse_meeting_date(text, ts) or espi.parse_meeting_date(title, ts)}
+    if cat == "wezwanie":
+        return {"tender": espi.parse_tender(text)}
     return {}
 
 

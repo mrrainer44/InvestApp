@@ -576,6 +576,29 @@ def test_pipeline():
     assert {"momentum", "sectors", "funds_buy", "funds_sell", "wig"} <= set(tr)
     co = cl.get("/api/companies").get_json()[0]
     assert {"trend", "vs200", "rs_3m", "mom", "new_high52"} <= set(co)
+    # A/B: harmonogram raportów, zwołanie WZ, wezwanie, kalendarz, ostrzeżenia
+    assert espi.classify("BORYSZEW SA (3/2026) Terminy publikacji raportów okresowych w 2026 roku") == "terminy"
+    assert espi.classify("X SA (1/2026) Zmiana harmonogramu publikacji raportów okresowych") == "terminy"
+    assert espi.classify("SYNTHAVERSE SA (39/2026) Ogłoszenie o zwołaniu Nadzwyczajnego Walnego Zgromadzenia") == "wz_zwolanie"
+    rd = espi.parse_report_dates("Treść raportu: - za I kwartał 2026 roku - 14 maja 2026 roku; - za III kwartał 2026 roku - "
+                                 "17 listopada 2026 roku; Raport roczny za 2025 rok - 16 kwietnia 2026 roku; raport półroczny "
+                                 "za I półrocze 2026 r. w dniu 13.08.2026 r. Nie będzie raportu za IV kwartał 2025 roku.")
+    assert rd == {"q1": "2026-05-14", "q3": "2026-11-17", "y": "2026-04-16", "h1": "2026-08-13"}, rd
+    assert espi.parse_report_dates("Treść raportu: zmiana terminu raportu za I półrocze 2026 r. z dnia 30 września 2026 r. "
+                                   "na dzień 22 września 2026 r.", "Zmiana terminu") == {"h1": "2026-09-22"}
+    assert espi.parse_meeting_date("Zarząd zwołuje NWZ na dzień 24 listopada 2026 r.", "2026-10-20 10:00") == "2026-11-24"
+    assert espi.parse_tender("Rozpoczęcie przyjmowania zapisów: 5.11.2026. Zakończenie przyjmowania zapisów: 4.12.2026. "
+                             "Cena akcji w wezwaniu 12,50 zł") == {"start": "2026-11-05", "end": "2026-12-04", "price": 12.5}
+    from gpwt import kalendarz, ostrzezenia
+    ev = kalendarz.events(db.connect(), 10, start="2026-10-30")
+    kinds = {e["kind"] for e in ev["events"]}
+    assert {"rpp", "cpi"} <= kinds, kinds  # RPP 4.11, szybki szacunek CPI 30.10
+    assert any(e["kind"] == "raport_termin" and "14" in e["date"][8:] for e in kalendarz.events(db.connect(), 5, start="2026-11-10")["events"])
+    assert ostrzezenia.expected_period("GPW", _d(2026, 10, 21)) == (2026, 2)
+    assert ostrzezenia.expected_period("NC", _d(2026, 11, 20)) == (2026, 3)
+    assert cl.get("/api/calendar?days=14").status_code == 200
+    assert "warned" in cl.get("/api/session?min=0").get_json()
+    assert "warnings" in cl.get("/api/companies").get_json()[0] and "events" in cl.get("/api/portfolio").get_json()
     # szybkie pobieranie w trakcie sesji
     st_q, stats_q = collect.run(quick=True)
     assert st_q == "ok" and stats_q["quotes_GPW"] == 5 and "ratio_cz_GPW" not in stats_q, stats_q

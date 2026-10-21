@@ -10,7 +10,9 @@ from datetime import date, datetime, timedelta
 
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
-from gpwt import analyses, collect, config, db, flows, market, portfolio, pressure, session, technicals, trends
+from gpwt import (analyses, collect, config, db, flows, kalendarz, market, portfolio, pressure, session, technicals,
+                  trends)
+from gpwt import ostrzezenia as gwarn
 from gpwt.config import ROOT, SERVER_HOST, SERVER_PORT
 from gpwt.util import ascii_fold, norm_investor
 
@@ -140,6 +142,7 @@ def companies():
         "WHERE c.source='art69'")}
     held = _held(c)
     tech = technicals.compute(c)["rows"]
+    warn = gwarn.compute(c)
     custom = {}
     for r in c.execute("SELECT * FROM custom_values"):
         custom.setdefault(r["ticker"], {})[f"c_{r['key']}"] = r["value"]
@@ -197,6 +200,7 @@ def companies():
             **{k: (tech.get(t) or {}).get(src) for k, src in (
                 ("trend", "trend"), ("vs200", "vs200"), ("rs_1m", "rs_1m"), ("rs_3m", "rs_3m"), ("mom", "mom"),
                 ("new_high52", "new_high52"), ("new_low52", "new_low52"))},
+            "warnings": warn.get(t) or None,
             "af_count": len(af.get(t, [])),
             "cmf21": press.get(t, {}).get(21),
             "cmf63": press.get(t, {}).get(63),
@@ -453,6 +457,20 @@ def set_espi_ticker(eid):
 def get_market():
     c = con()
     r = market.context(c)
+    c.close()
+    return jsonify(r)
+
+
+# ---------------- kalendarz ----------------
+
+@app.get("/api/calendar")
+def get_calendar():
+    try:
+        days = max(1, min(60, int(request.args.get("days", 14))))
+    except ValueError:
+        days = 14
+    c = con()
+    r = kalendarz.events(c, days)
     c.close()
     return jsonify(r)
 
