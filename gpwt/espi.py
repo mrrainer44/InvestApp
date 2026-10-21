@@ -83,7 +83,9 @@ def share_issue(title):
     kapitału pod programy motywacyjne."""
     _, subject = split_title(title)
     s = subject or title or ""
-    return bool(_SHARE_ISSUE.search(s)) and not _NOT_TAG["emisja"].search(s) and not re.search(r"warunkow\w* podwy", s, re.I)
+    return bool(_SHARE_ISSUE.search(s)) and not _NOT_TAG["emisja"].search(s) and not re.search(
+        r"warunkow\w* podwy|uchyl|odst[aą]pi|rezygnacj|odwo[lł]ani|zaniechani|powiadomieni\w* o transakcj|"
+        r"transakcj\w* (na|dotycz)|withdraw|cancel", s, re.I)
 
 
 def keywords(title):

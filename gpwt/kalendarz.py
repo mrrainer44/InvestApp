@@ -24,6 +24,10 @@ LEGAL = [("05-15", "NC", "q1"), ("05-29", "GPW", "q1"), ("08-14", "NC", "q2"), (
          ("11-14", "NC", "q3"), ("11-29", "GPW", "q3"), ("03-31", "GPW+NC", "y"), ("04-30", "GPW+NC", "y")]
 
 
+def _cap(s):
+    return s[:1].upper() + s[1:]
+
+
 def _workday_back(d):
     while d.weekday() >= 5:
         d -= timedelta(days=1)
@@ -78,7 +82,7 @@ def events(con, days=14, start=None):
     for t, kinds in sched.items():
         for kind, d in kinds.items():
             if t0 <= d <= t1:
-                add(d, "raport", espi.REPORT_LABEL.get(kind, "raport okresowy").capitalize(), t,
+                add(d, "raport", _cap(espi.REPORT_LABEL.get(kind, "raport okresowy")), t,
                     "Termin z harmonogramu publikacji raportów okresowych spółki.", "ESPI/EBI")
     for md, mkt, kind in LEGAL:
         d = f"{today.year}-{md}"
