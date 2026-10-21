@@ -53,7 +53,7 @@ twoja-domena.pl {
     reverse_proxy 127.0.0.1:8050
 }
 ```
-Pobieranie: pełne codziennie o 18:30 (`gpw-tracker-collect.timer`) i szybkie w dni sesyjne o 10:00, 13:00 i 17:10 (`gpw-tracker-quick.timer`: notowania i nowe komunikaty do zakładki „Sesja”). Zmienne w `/etc/gpw-tracker.env`: `GPWT_USER`, `GPWT_PASSWORD`, `GPWT_BIND`, `TZ=Europe/Warsaw` (daty sesji liczone są wg czasu polskiego). Logi: `journalctl -u gpw-tracker` i `logs/collect.log`.
+Kontekst rynku: indeksy (Biznesradar w trakcie sesji, archiwum gpw.pl do średnich), kursy walut i złota z API NBP, ropa i miedź z Bankier.pl. Pobieranie: pełne codziennie o 18:30 (`gpw-tracker-collect.timer`) i szybkie w dni sesyjne o 10:00, 13:00 i 17:10 (`gpw-tracker-quick.timer`: notowania i nowe komunikaty do zakładki „Sesja”). Zmienne w `/etc/gpw-tracker.env`: `GPWT_USER`, `GPWT_PASSWORD`, `GPWT_BIND`, `TZ=Europe/Warsaw` (daty sesji liczone są wg czasu polskiego). Logi: `journalctl -u gpw-tracker` i `logs/collect.log`.
 
 **Analizy fundamentalne z OneDrive (opcjonalnie):** pliki z wybranego folderu OneDrive trafiają co 15 minut do `data/analyses` (rclone sync, `deploy/gpw-tracker-af-sync.*`). Aplikacja przypisuje je do spółki po tickerze w nazwie pliku (np. `CDR_analiza_2026-10-19.pdf`) albo po nazwie spółki. Dla każdej spółki widać je w kolumnie „AF” i w panelu spółki. Do synchronizacji użyj osobnego remote'a rclone z uprawnieniami tylko do odczytu (`access_scopes = Files.Read Files.Read.All Sites.Read.All offline_access`) w `/var/lib/gpw-tracker/rclone.conf`, a ścieżkę ustaw w `GPWT_AF_REMOTE` w `/etc/gpw-tracker.env`.
 

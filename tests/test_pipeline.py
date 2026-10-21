@@ -530,6 +530,12 @@ def test_pipeline():
     assert ses["watch"]["key"] == "__portfolio" and [x["ticker"] for x in ses["watch"]["rows"]] == ["PKO"]
     assert ses["insider_sessions"] == 1 and "series" in ses
     assert cl.get("/api/session?min=0&sessions=20").get_json()["insider_sessions"] == 20
+    # kontekst rynku: WIG z archiwum (2 sesje wyżej), bez historii do SMA i szerokości - bez błędów
+    mk_ = cl.get("/api/market").get_json()
+    wig = next(i for i in mk_["indices"] if i["key"] == "WIG")
+    assert wig["value"] == 110000.0 and abs(wig["change_pct"] - 10.0) < 1e-9 and wig["sma200"] is None
+    from gpwt import market as _mkt
+    assert _mkt._sma([1, 2, 3, 4], 2) == 3.5 and _mkt._sma([1], 2) is None
     # szybkie pobieranie w trakcie sesji
     st_q, stats_q = collect.run(quick=True)
     assert st_q == "ok" and stats_q["quotes_GPW"] == 5 and "ratio_cz_GPW" not in stats_q, stats_q

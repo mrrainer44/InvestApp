@@ -865,6 +865,52 @@ $("#btnRunWeekly").addEventListener("click", () => startRun(true));
 function updateFoot(s) { const r = s.runs.find((x) => x.finished);
   $("#lastRun").textContent = r ? `Ostatnie pobranie: ${r.finished.replace("T", " ").slice(0, 16)} (${r.status === "ok" ? "udane" : "błąd"})` : "Jeszcze nic nie pobrano"; }
 
+/* ---------- kontekst rynku ---------- */
+let mktData = null;
+const BREADTH_TXT = (p) => p == null ? "" : p >= 60 ? "większość spółek w trendzie wzrostowym – szeroka hossa"
+  : p >= 40 ? "rynek mieszany – trend wzrostowy ma tylko część spółek" : "większość spółek pod średnią 200 sesji – słaby rynek lub korekta";
+const smaTag = (v, n) => v == null ? "" : `<span class="sig ${v >= 0 ? "up" : "down"}" title="${v >= 0 ? "Nad" : "Pod"} średnią z ${n} sesji o ${fmtNum(Math.abs(v), 1)}%">${v >= 0 ? "▲" : "▼"} SMA${n}</span>`;
+const macroVal = (m) => m.key.startsWith("FX_") ? fmtNum(m.value, 4) : m.key === "GOLD" ? fmtNum(m.value, 2) : fmtNum(m.value, m.value >= 1000 ? 0 : 2);
+
+async function loadMarket() { mktData = await api("/api/market"); return mktData; }
+function renderMarketStrip(el, m) {
+  if (!m || !m.indices.length) { el.innerHTML = ""; return; }
+  const b = m.breadth;
+  el.innerHTML = `${m.indices.filter((i) => i.key !== "WIG").map((i) => `<div class="mchip" title="${esc(i.name)} ${fmtNum(i.value, 2)} · ${i.live ? "bieżące notowanie " + esc(i.as_of.slice(11)) : "zamknięcie " + dd(i.as_of)}
+SMA50 ${fmtNum(i.sma50, 0)} (${i.vs50 == null ? "–" : (i.vs50 > 0 ? "+" : "") + fmtNum(i.vs50, 1) + "%"}), SMA200 ${fmtNum(i.sma200, 0)} (${i.vs200 == null ? "–" : (i.vs200 > 0 ? "+" : "") + fmtNum(i.vs200, 1) + "%"})">
+      <b>${esc(i.name)}</b> ${signed(i.change_pct)} ${smaTag(i.vs50, 50)}${smaTag(i.vs200, 200)}</div>`).join("")}
+    ${b ? `<div class="mchip" title="Odsetek spółek GPW z kursem nad średnią z 200 sesji. ${BREADTH_TXT(b.pct200)}"><b>nad SMA200</b> ${fmtNum(b.pct200, 0)}% spółek</div>
+      <div class="mchip" title="Spółki GPW na nowym maksimum / minimum z 52 tygodni"><b>52 tyg.</b> <span class="up">${b.highs.length} maks.</span> / <span class="down">${b.lows.length} min.</span></div>` : ""}
+    ${m.macro.filter((x) => ["FX_USD", "FX_EUR", "ROPA", "MIEDZ"].includes(x.key)).map((x) => `<div class="mchip" title="${esc(x.name)} · ${esc(x.source)}, ${dd(x.date)}${x.change_1m == null ? "" : " · 1 mies.: " + (x.change_1m > 0 ? "+" : "") + fmtNum(x.change_1m, 1) + "%"}">
+      <b>${esc(x.name.split(" (")[0])}</b> ${macroVal(x)} ${signed(x.change_pct)}</div>`).join("")}`;
+}
+function marketCard(m) {
+  if (!m || !m.indices.length) return "";
+  const b = m.breadth;
+  const idx = `<table class="stable"><thead><tr><th>Indeks</th><th class="n">Wartość</th><th class="n">Dziś</th>
+      <th class="n" title="Odległość od średniej z 50 sesji">vs SMA50</th><th class="n" title="Odległość od średniej z 200 sesji">vs SMA200</th>
+      <th title="Średnia 50 sesji nad średnią 200 sesji = trend wzrostowy">Trend</th><th class="n">Zakres 52 tyg.</th><th>Stan na</th></tr></thead><tbody>
+    ${m.indices.map((i) => { const pos = i.max52 && i.min52 && i.max52 > i.min52 ? (i.value - i.min52) / (i.max52 - i.min52) * 100 : null;
+      return `<tr><td><b>${esc(i.name)}</b></td><td class="n">${fmtNum(i.value, 2)}</td><td class="n">${signed(i.change_pct)}</td>
+      <td class="n">${signed(i.vs50, 1)}</td><td class="n">${signed(i.vs200, 1)}</td>
+      <td>${i.golden == null ? `<span class="dim">–</span>` : i.golden ? `<span class="up">wzrostowy</span>` : `<span class="down">spadkowy</span>`}</td>
+      <td class="n">${pos == null ? `<span class="dim">–</span>` : `<span class="range" title="Minimum ${fmtNum(i.min52, 0)}, maksimum ${fmtNum(i.max52, 0)}"><i style="left:${Math.max(0, Math.min(100, pos))}%"></i></span> ${fmtNum(pos, 0)}%`}</td>
+      <td class="dim">${i.live ? "teraz " + esc(i.as_of.slice(11)) : dd(i.as_of)}</td></tr>`; }).join("")}</tbody></table>`;
+  const gauge = (p, label) => `<div class="gauge"><div class="gauge-l"><span>${label}</span><b>${fmtNum(p, 0)}%</b></div>
+      <div class="bbar"><i class="up" style="flex:${p || 0.001}"></i><i class="down" style="flex:${100 - (p || 0) || 0.001}"></i></div></div>`;
+  const hl = (arr, cls) => arr.length ? arr.map((h) => `<a class="tk" href="#" data-t="${esc(h.ticker)}" title="${esc(h.name)} ${fmtNum(h.close, 2)}">${esc(h.ticker)}</a>`).join(" ") : `<span class="dim">brak</span>`;
+  const br = b ? `<div class="mcols"><div>${gauge(b.pct200, "Spółki GPW nad SMA200")}${gauge(b.pct50, "Spółki GPW nad SMA50")}
+      <p class="small">${esc(BREADTH_TXT(b.pct200))}. <span class="dim">Orientacyjnie: powyżej 60% szeroka hossa, poniżej 40% słabość rynku. Liczone dla ${b.n200} spółek GPW z co najmniej 200 sesjami historii.</span></p></div>
+      <div><p><b class="up">Nowe maksima 52 tyg. (${b.highs.length})</b><br>${hl(b.highs)}</p>
+      <p><b class="down">Nowe minima 52 tyg. (${b.lows.length})</b><br>${hl(b.lows)}</p>
+      <p class="dim small">Kurs (lub maksimum/minimum dnia) przebił najwyższy/najniższy poziom z ostatnich 250 sesji.</p></div></div>` : "";
+  const mac = m.macro.length ? `<table class="stable"><thead><tr><th>Wskaźnik</th><th class="n">Wartość</th><th class="n">Zmiana</th><th class="n">1 mies.</th><th>Data</th><th>Źródło</th></tr></thead><tbody>
+      ${m.macro.map((x) => `<tr><td>${esc(x.name)}</td><td class="n">${macroVal(x)}</td><td class="n">${signed(x.change_pct)}</td><td class="n">${signed(x.change_1m, 1)}</td>
+        <td class="dim">${x.ts ? esc(dd(x.ts.slice(0, 10)) + " " + x.ts.slice(11, 16)) : dd(x.date)}</td><td class="dim">${esc(x.source)}</td></tr>`).join("")}</tbody></table>
+      <p class="dim small">Kursy walut NBP to kursy średnie z fixingu ok. 11:45 (zmiana względem poprzedniego fixingu). Rentowności polskich obligacji nie mają darmowego źródła dziennego, które wolno pobierać automatycznie – nie są pokazywane.</p>` : "";
+  return `<div class="scard"><h2>Kontekst rynku</h2>${idx}${br}<h3 class="sub">Waluty i surowce</h3>${mac}</div>`;
+}
+
 /* ---------- moje spółki (portfel) ---------- */
 let pfData = null;
 const HORIZONS = ["krótki (dni–tygodnie)", "średni (miesiące)", "długi (1–5 lat)"];
@@ -879,6 +925,7 @@ const tk = (t) => `<a class="tk" href="#" data-t="${esc(t)}">${esc(t)}</a>`;
 const dd = (d) => d ? d.split("-").reverse().join(".") : "";
 
 async function loadPortfolio() {
+  loadMarket().then((m) => renderMarketStrip($("#pfMarket"), m)).catch(() => {});
   pfData = await api("/api/portfolio");
   renderPortfolio(pfData);
   if (!$("#tickerList").children.length) {
@@ -1159,7 +1206,8 @@ function renderSession(d) {
     : `<p class="dim">Brak.</p>`;
 
   $("#sesBody").innerHTML = `${kpi}
-    <div class="scard"><h2>Moje spółki${w ? ` <span class="dim">– kolumna „${esc(w.label)}”</span>` : ""}</h2>${watchHtml}</div>
+    <div class="scard"><h2>Moje spółki${w ? ` <span class="dim">– ${w.key === "__portfolio" ? "portfel" : `kolumna „${esc(w.label)}”`}</span>` : ""}</h2>${watchHtml}</div>
+    ${marketCard(mktData)}
     <div class="scols">
       <div class="scard"><h2>Najmocniej rosną</h2>${moversTable(d.gainers, "Żadna płynna spółka nie rośnie.")}</div>
       <div class="scard"><h2>Najmocniej spadają</h2>${moversTable(d.losers, "Żadna płynna spółka nie spada.")}</div>
@@ -1188,6 +1236,7 @@ async function refreshSession() {
   $("#sesWatch").innerHTML = `<option value="">${d.has_portfolio ? "Portfel (Moje spółki)" : "– wybierz –"}</option>` + d.watch_columns.map((c) =>
     `<option value="${esc(c.key)}">${esc(c.label)}</option>`).join("");
   $("#sesWatch").value = sesPref.watch || "";
+  try { await loadMarket(); renderMarketStrip($("#sesMarket"), mktData); } catch { /* kontekst rynku niedostępny */ }
   renderSession(d);
 }
 const saveSesPref = () => { api("/api/settings/session", { method: "PUT", body: sesPref }).catch(() => {}); refreshSession(); };
