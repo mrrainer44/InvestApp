@@ -618,6 +618,34 @@ def test_pipeline():
     xt, _ = collect._pdf_texts(4242, ["https://bonnier.pl/static/att/ebi/2026-01/x.xhtml"], tag="x")
     collect.http.get = orig_get
     assert "14.11.2026" in xt and espi.parse_report_dates("Treść raportu: " + xt) == {"q3": "2026-11-14"}
+    # E: sprawozdania (komórki premium pomijane), rating, miary jakości
+    rt = collect.br.parse_report_table(
+        '<table class="report-table"><tr><th></th><th>2025/Q4 (gru 25)</th><th>2026/Q1 (mar 26)</th><th>2026 (gru 26)</th></tr>'
+        '<tr data-field="IncomeRevenues"><td>Przychody</td><td><span class="value">1 000</span></td>'
+        '<td><span class="value"><span>1 200</span></span></td><td><span class="value">9</span></td></tr>'
+        '<tr data-field="IncomeEBITDA"><td>EBITDA</td><td><span class="value"><span class="premium-value">50</span></span></td>'
+        '<td><span class="value"><span class="premium-value">60</span></span></td><td></td></tr></table>')
+    assert rt[0] == {"IncomeRevenues": {"2025/Q4": 1000.0, "2026/Q1": 1200.0}} and rt[1] == ["2025/Q4", "2026/Q1"], rt
+    rating = collect.br.parse_rating(
+        '<table class="rating-table"><tr><td>Zysk netto</td><td>688 859 000</td><td>1</td></tr>'
+        '<tr><td>Jakość zysku</td><td>0.85</td><td>0</td></tr><tr><td>Piotroski F-Score</td><td></td><td>6</td></tr></table>'
+        '<table class="rating-table"><tr><td>Altman EM-Score</td><td></td><td>22.4</td></tr><tr><td>Rating</td><td></td><td>AAA</td></tr></table>')
+    assert rating["fscore"] == 6 and rating["altman"] == 22.4 and rating["altman_rating"] == "AAA" and len(rating["fscore_items"]) == 2
+    from gpwt import quality
+    per = [f"{y}/Q{q}" for y in range(2021, 2027) for q in range(1, 5)][:-2]  # do 2026/Q2
+    fin = {"IncomeRevenues": {p: 100 + i for i, p in enumerate(per)}, "IncomeNetProfit": {p: 20 for p in per},
+           "IncomeEBIT": {p: 25 for p in per}, "CashflowAmortization": {p: 5 for p in per},
+           "BalanceCapital": {p: 400 for p in per}, "BalanceCash": {p: 50 for p in per}, "BalanceNoncurrentBorrowings": {p: 110 for p in per},
+           "CashflowOperatingCashflow": {p: 30 for p in per}, "CashflowCapex": {p: 10 for p in per},
+           "CashflowDividend": {f"{y}/Q3": 10 for y in range(2019, 2026)}, "ShareAmount": {p: 1000 for p in per},
+           "CZ": {p: 10 for p in per}}
+    qm = quality.metrics(fin, None, 12.0)
+    assert qm["period"] == "2026/Q2" and abs(qm["roe"] - 20.0) < 1e-9 and qm["roe_min5"] == 20.0
+    assert abs(qm["nd_ebitda"] - 60 / 120) < 1e-9 and qm["fcf_ttm"] == 80 and qm["fcf_pos_years"] == 5
+    assert qm["div_streak"] == 7 and abs(qm["cz_vs_med"] - 20.0) < 1e-9 and qm["shares_3y"] == 0.0
+    assert qm["quality"] == 100 and {p["name"] for p in qm["quality_parts"]} >= {"ROE stabilnie", "Zadłużenie", "Wolna gotówka"}
+    assert "quality" in cl.get("/api/companies").get_json()[0] and "quality" in cl.get("/api/trends?min=0").get_json()
+    assert "quarters" in cl.get("/api/company/PKO").get_json()
     # szybkie pobieranie w trakcie sesji
     st_q, stats_q = collect.run(quick=True)
     assert st_q == "ok" and stats_q["quotes_GPW"] == 5 and "ratio_cz_GPW" not in stats_q, stats_q

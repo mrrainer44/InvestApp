@@ -10,8 +10,8 @@ from datetime import date, datetime, timedelta
 
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
-from gpwt import (analyses, collect, config, db, flows, kalendarz, market, portfolio, pressure, session, technicals,
-                  trends)
+from gpwt import (analyses, collect, config, db, flows, kalendarz, market, portfolio, pressure, quality, session,
+                  technicals, trends)
 from gpwt import ostrzezenia as gwarn
 from gpwt.config import ROOT, SERVER_HOST, SERVER_PORT
 from gpwt.util import ascii_fold, norm_investor
@@ -143,6 +143,7 @@ def companies():
     held = _held(c)
     tech = technicals.compute(c)["rows"]
     warn = gwarn.compute(c)
+    qual = quality.compute(c)
     custom = {}
     for r in c.execute("SELECT * FROM custom_values"):
         custom.setdefault(r["ticker"], {})[f"c_{r['key']}"] = r["value"]
@@ -201,6 +202,13 @@ def companies():
                 ("trend", "trend"), ("vs200", "vs200"), ("rs_1m", "rs_1m"), ("rs_3m", "rs_3m"), ("mom", "mom"),
                 ("new_high52", "new_high52"), ("new_low52", "new_low52"))},
             "warnings": warn.get(t) or None,
+            **{k: (qual.get(t) or {}).get(src) for k, src in (
+                ("quality", "quality"), ("rev_ttm_yoy", "rev_ttm_yoy"), ("np_ttm_yoy", "np_ttm_yoy"), ("rev_yoy", "rev_yoy"),
+                ("np_yoy", "np_yoy"), ("roe", "roe"), ("roic", "roic"), ("net_margin", "net_margin"),
+                ("nd_ebitda", "nd_ebitda"), ("net_cash", "net_cash"), ("fcf_ttm", "fcf_ttm"), ("fscore", "fscore"),
+                ("altman", "altman"), ("altman_rating", "altman_rating"), ("div_streak", "div_streak"),
+                ("payout", "payout"), ("cz_vs_med", "cz_vs_med"), ("cz_med5", "cz_med5"), ("shares_3y", "shares_3y"),
+                ("fin_period", "period"))},
             "af_count": len(af.get(t, [])),
             "cmf21": press.get(t, {}).get(21),
             "cmf63": press.get(t, {}).get(63),
@@ -232,6 +240,8 @@ def company(ticker):
         "custom": {r["key"]: r["value"] for r in c.execute("SELECT key, value FROM custom_values WHERE ticker=?",
                                                            (ticker,))},
     }
+    res["quality"] = quality.compute(c).get(ticker)
+    res["quarters"] = quality.quarters(c, ticker)
     af_col = c.execute("SELECT key, label, options FROM custom_columns WHERE key='ocena_af'").fetchone()
     res["af_column"] = ({"key": af_col["key"], "label": af_col["label"], "options": json.loads(af_col["options"] or "[]")}
                         if af_col else None)

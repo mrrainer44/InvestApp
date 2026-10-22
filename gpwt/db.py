@@ -52,6 +52,13 @@ CREATE TABLE IF NOT EXISTS market_live(
 CREATE TABLE IF NOT EXISTS macro_daily(
   key TEXT, date TEXT, value REAL, change REAL, ts TEXT, source TEXT, PRIMARY KEY(key, date)
 );
+CREATE TABLE IF NOT EXISTS fin_q(
+  ticker TEXT, period TEXT, field TEXT, value REAL, PRIMARY KEY(ticker, period, field)
+);
+CREATE TABLE IF NOT EXISTS fin_meta(
+  ticker TEXT PRIMARY KEY, last_period TEXT, fetched TEXT, fscore INTEGER, fscore_items TEXT, altman REAL,
+  altman_rating TEXT
+);
 CREATE TABLE IF NOT EXISTS portfolios(
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, created TEXT
 );

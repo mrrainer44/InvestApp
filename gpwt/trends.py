@@ -82,10 +82,30 @@ def funds(con, tech, days=365, n=25):
     return buy[:n], sell[:n]
 
 
+def quality_rank(con, tech, min_turn=100_000, min_nc=30_000, n=30):
+    """Długi termin: najwyższa ocena jakości wśród płynnych spółek (średni obrót z 20 sesji od progu)."""
+    from . import quality
+    q = quality.compute(con)
+    rows = []
+    for t, x in q.items():
+        tx = tech["rows"].get(t) or {}
+        if x.get("quality") is None or (tx.get("avg20") or 0) < (min_nc if tx.get("market") == "NC" else min_turn):
+            continue
+        rows.append({"ticker": t, "name": tx.get("name"), "sector": tx.get("sector"), "market": tx.get("market"),
+                     **{k: x.get(k) for k in ("quality", "fscore", "roe", "roe_min5", "net_margin", "nd_ebitda", "net_cash",
+                                              "fcf_pos_years", "fcf_years", "div_streak", "payout", "cz_vs_med",
+                                              "altman_rating", "rev_ttm_yoy", "np_ttm_yoy", "shares_3y", "bank",
+                                              "quality_parts")},
+                     "trend": tx.get("trend"), "vs200": tx.get("vs200")})
+    rows.sort(key=lambda r: (-r["quality"], -(r["fscore"] or 0)))
+    return rows[:n], len(rows)
+
+
 def summary(con, min_turn=100_000, min_nc=30_000, trend_only=True, fund_days=365):
     tech = technicals.compute(con)
+    qual, n_qual = quality_rank(con, tech, min_turn, min_nc)
     mom, n_mom = momentum(tech, min_turn, min_nc, trend_only)
     buy, sell = funds(con, tech, fund_days)
     return {"date": tech["day"], "sessions": tech.get("sessions"), "wig": tech["wig"], "momentum": mom, "n_momentum": n_mom,
             "trend_only": trend_only, "min_turnover": min_turn, "min_nc": min_nc, "sectors": sectors(tech),
-            "funds_buy": buy, "funds_sell": sell, "fund_days": fund_days}
+            "funds_buy": buy, "funds_sell": sell, "fund_days": fund_days, "quality": qual, "n_quality": n_qual}

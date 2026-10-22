@@ -59,6 +59,13 @@ const divYieldFmt = (cell) => {
   return `${fmtNum(v, 2)}%${one}${cell.getField() === "div_yield_regular" ? warn : ""}`;
 };
 
+const pctPlain = (c) => c.getValue() == null ? "" : `<span class="${c.getValue() < 0 ? "down" : ""}">${fmtNum(c.getValue(), 1)}%</span>`;
+const qualFmt = (c) => { const v = c.getValue(); if (v == null) return "";
+  return `<span class="qbadge ${v >= 70 ? "good" : v >= 45 ? "mid" : "bad"}">${v}</span>`; };
+const ndFmt = (c) => { const d = c.getRow().getData(); if (d.net_cash) return `<span class="up">gotówka netto</span>`;
+  const v = c.getValue(); return v == null ? "" : `<span class="${v > 3 ? "down" : v < 2 ? "" : "warn"}">${fmtNum(v, 1)}</span>`; };
+const czMedFmt = (c) => { const v = c.getValue(); if (v == null) return "";
+  return `<span class="${v < -15 ? "up" : v > 25 ? "down" : ""}" title="Mediana C/Z z 5 lat: ${fmtNum(c.getRow().getData().cz_med5, 1)}">${v > 0 ? "+" : ""}${fmtNum(v, 0)}%</span>`; };
 const trendFmt = (c) => c.getValue() == null ? "" : c.getValue() ? `<span class="up">▲ wzrost.</span>` : `<span class="down">▼ spadk.</span>`;
 const ppFmt = (c) => { const v = c.getValue(); return v == null ? "" : `<span class="${v > 0 ? "up" : v < 0 ? "down" : ""}">${v > 0 ? "+" : ""}${fmtNum(v, 1)} pp</span>`; };
 
@@ -75,7 +82,7 @@ const numSort = (a, b) => (a ?? -Infinity) - (b ?? -Infinity);
 /* ---------- kolumny listy spółek ---------- */
 const GROUPS = {
   base: "Podstawowe", quote: "Notowania", ret: "Stopy zwrotu", val: "Wycena",
-  tech: "Trend i siła względna", div: "Dywidendy", own: "Akcjonariat i przepływy", press: "Presja kupujących", af: "Analiza fundamentalna",
+  tech: "Trend i siła względna", fin: "Wyniki i jakość", div: "Dywidendy", own: "Akcjonariat i przepływy", press: "Presja kupujących", af: "Analiza fundamentalna",
   custom: "Moje kolumny",
 };
 const cmfFmt = (cell) => { const v = cell.getValue(); if (v == null) return `<span class="dim">–</span>`;
@@ -127,7 +134,32 @@ const BUILTIN = [
   { field: "evebitda", title: "EV/EBITDA", group: "val", hozAlign: "right", formatter: ratio, sorter: numSort },
   { field: "cp", title: "C/P", group: "val", hozAlign: "right", formatter: ratio, sorter: numSort, visible: false },
   { field: "report", title: "Ostatni raport", group: "val", visible: false },
+  { field: "quality", title: "Jakość", group: "fin", hozAlign: "right", sorter: numSort, formatter: qualFmt, width: 84,
+    headerTooltip: "Ocena jakości biznesu 0–100: F-Score Piotroskiego (do 25 pkt), ROE co najmniej 10% w każdym z ostatnich lat (20), stabilna marża netto (10), dług netto / EBITDA poniżej 2 (15), dodatni wolny przepływ gotówki w 4 z 5 lat (15), Altman EM-Score ≥ 5,5 (15). Szczegóły w panelu spółki." },
+  { field: "rev_ttm_yoy", title: "Przychody r/r", group: "fin", hozAlign: "right", formatter: pct, sorter: numSort,
+    headerTooltip: "Przychody z 4 ostatnich kwartałów wobec 4 kwartałów rok wcześniej (banki: wynik odsetkowy + prowizyjny)." },
+  { field: "np_ttm_yoy", title: "Zysk netto r/r", group: "fin", hozAlign: "right", formatter: pct, sorter: numSort,
+    headerTooltip: "Zysk netto z 4 ostatnich kwartałów wobec roku wcześniej. Puste, gdy rok wcześniej była strata." },
+  { field: "roe", title: "ROE", group: "fin", hozAlign: "right", formatter: pctPlain, sorter: numSort,
+    headerTooltip: "Zysk netto z 4 kwartałów / średni kapitał własny." },
+  { field: "net_margin", title: "Marża netto", group: "fin", hozAlign: "right", formatter: pctPlain, sorter: numSort, visible: false },
+  { field: "nd_ebitda", title: "Dług netto / EBITDA", group: "fin", hozAlign: "right", sorter: numSort, formatter: ndFmt,
+    headerTooltip: "Dług netto (kredyty, obligacje, leasing minus gotówka i inwestycje krótkoterminowe) / EBITDA z 4 kwartałów. Poniżej 2 bezpiecznie." },
+  { field: "fcf_ttm", title: "FCF 4 kw.", group: "fin", hozAlign: "right", sorter: numSort, visible: false,
+    formatter: (c) => c.getValue() == null ? "" : `<span class="${c.getValue() < 0 ? "down" : ""}">${fmtMoney(c.getValue() * 1000)}</span>`,
+    headerTooltip: "Wolny przepływ gotówki z 4 kwartałów: przepływy operacyjne minus CAPEX." },
+  { field: "fscore", title: "F-Score", group: "fin", hozAlign: "center", sorter: numSort, width: 78,
+    formatter: (c) => c.getValue() == null ? "" : `<span class="${c.getValue() >= 7 ? "up" : c.getValue() <= 3 ? "down" : ""}">${c.getValue()}/9</span>`,
+    headerTooltip: "Piotroski F-Score (Biznesradar): 9 kryteriów zyskowności, zadłużenia i efektywności. 7–9 mocno, 0–3 słabo." },
+  { field: "altman_rating", title: "Altman", group: "fin", hozAlign: "center", visible: false, width: 74,
+    headerTooltip: "Rating z Altman EM-Score (Biznesradar): AAA najlepszy, poniżej BB+ podwyższone ryzyko upadłości." },
+  { field: "cz_vs_med", title: "C/Z vs 5 lat", group: "fin", hozAlign: "right", sorter: numSort, formatter: czMedFmt,
+    headerTooltip: "Obecne C/Z na tle mediany C/Z spółki z ostatnich 5 lat (20 kwartałów). Ujemne = taniej niż zwykle." },
+  { field: "shares_3y", title: "Liczba akcji 3 lata", group: "fin", hozAlign: "right", formatter: pct, sorter: numSort, visible: false,
+    headerTooltip: "Zmiana liczby akcji w 3 lata: wzrost = rozwodnienie (emisje), spadek = skup akcji." },
   { field: "div_has", title: "Dywidenda 12 mies.", headerTooltip: "Tak = dywidenda wypłacona w ostatnich 12 miesiącach albo już zapowiedziana (z ustalonym dniem prawa). Wcześniejsze wypłaty są w panelu spółki.", group: "div", formatter: yesno, headerFilter: "tickCross", headerFilterParams: { tristate: true }, hozAlign: "center" },
+  { field: "div_streak", title: "Lata dywidendy z rzędu", group: "div", hozAlign: "right", sorter: numSort,
+    formatter: (c) => c.getValue() ? fmtNum(c.getValue(), 0) : "", headerTooltip: "Ile lat z rzędu spółka wypłacała dywidendę (z przepływów pieniężnych)." },
   { field: "div_yield", title: "Stopa dyw. 12 mies.", group: "div", hozAlign: "right", formatter: divYieldFmt, sorter: numSort,
     headerTooltip: "Wszystkie dywidendy z dniem odcięcia w ostatnich 12 miesiącach, w relacji do kursu." },
   { field: "div_yield_regular", title: "Stopa dyw. regularna", group: "div", hozAlign: "right", formatter: divYieldFmt, sorter: numSort,
@@ -654,6 +686,42 @@ function sparkline(prices) {
     <div class="dim" style="display:flex;justify-content:space-between;font-size:12px"><span>${prices[0].date} · ${fmtNum(v[0])}</span><span>${prices.at(-1).date} · ${fmtNum(v.at(-1))}</span></div>`;
 }
 
+/* wyniki finansowe i jakość biznesu (długi termin) */
+const QUAL_DESC = "Ocena 0–100 z kryteriów: F-Score Piotroskiego (do 25 pkt), ROE co najmniej 10% w każdym z ostatnich lat (20), stabilna marża netto (10), dług netto / EBITDA poniżej 2 (15), dodatni wolny przepływ gotówki w 4 z 5 lat (15), Altman EM-Score ≥ 5,5 (15). Liczona z kryteriów dostępnych dla spółki.";
+function qualityBlock(d) {
+  const q = d.quality, qs = d.quarters;
+  if (!q || !q.period) return `<h3>Wyniki i jakość</h3><p class="dim">Brak danych finansowych (pojawią się po tygodniowym pobraniu sprawozdań).</p>`;
+  const k = (v, d = 1, suf = "%") => v == null ? `<span class="dim">–</span>` : `${fmtNum(v, d)}${suf}`;
+  const yoy = (v) => v == null ? `<span class="dim">–</span>` : signed(v, 0);
+  const th = (x) => x == null ? `<span class="dim">–</span>` : fmtMoney(x * 1000);
+  const tbl = qs && qs.rows.length ? `<table><tr><th>Kwartał</th><th class="n">${qs.bank ? "Wynik odsetk. + prowiz." : "Przychody"}</th><th class="n">r/r</th>
+      ${qs.bank ? "" : `<th class="n">EBITDA</th><th class="n">r/r</th>`}<th class="n">Zysk netto</th><th class="n">r/r</th></tr>
+      ${qs.rows.map((r) => `<tr><td>${esc(r.period.replace("/", " "))}</td><td class="n">${th(r.rev)}</td><td class="n">${yoy(r.rev_yoy)}</td>
+        ${qs.bank ? "" : `<td class="n">${th(r.ebitda)}</td><td class="n">${yoy(r.ebitda_yoy)}</td>`}
+        <td class="n ${r.np < 0 ? "down" : ""}">${th(r.np)}</td><td class="n">${yoy(r.np_yoy)}</td></tr>`).join("")}</table>` : "";
+  const parts = (q.quality_parts || []).map((p) => `<li><b>${fmtNum(p.points, 0)}/${p.of}</b> ${esc(p.name)} <span class="dim">– ${esc(p.text)}</span></li>`).join("");
+  const fs = (q.fscore_items || []).length ? `<details><summary>F-Score ${q.fscore}/9 – kryteria</summary><ul class="fs">${q.fscore_items.map((i) =>
+      `<li class="${i.ok ? "up" : "down"}">${i.ok ? "✓" : "✗"} ${esc(i.name)} <span class="dim">${esc(i.value)}</span></li>`).join("")}</ul></details>` : "";
+  const roeH = Object.entries(q.roe_hist || {}).map(([y, v]) => `${y}: ${fmtNum(v, 1)}%`).join(" · ");
+  return `<h3>Wyniki i jakość <span class="dim">(dane za ${esc(q.period.replace("/", " "))})</span></h3>
+    <div class="qhead">${q.quality == null ? "" : `<div class="qscore ${q.quality >= 70 ? "good" : q.quality >= 45 ? "mid" : "bad"}" title="${esc(QUAL_DESC)}">${q.quality}<small>/100</small></div>`}
+      <ul class="qparts">${parts}</ul></div>
+    <div class="facts qfacts">
+      <div><b>${yoy(q.rev_ttm_yoy)}</b><span>${q.bank ? "Wynik odsetk.+prowiz." : "Przychody"} r/r (4 kw.)</span></div>
+      <div><b>${yoy(q.np_ttm_yoy)}${q.np_turnaround ? ` <span class="sig up">z straty na zysk</span>` : ""}</b><span>Zysk netto r/r (4 kw.)</span></div>
+      <div><b>${k(q.roe)}</b><span title="${esc(roeH)}">ROE${roeH ? " (najniższe 5 lat: " + k(q.roe_min5) + ")" : ""}</span></div>
+      ${q.bank ? "" : `<div><b>${k(q.roic)}</b><span>ROIC</span></div>`}
+      <div><b>${k(q.net_margin)}</b><span>Marża netto${q.margin_std5 != null ? ` (wahania ${fmtNum(q.margin_std5, 1)} pp)` : ""}</span></div>
+      ${q.bank ? "" : `<div><b>${q.net_cash ? `<span class="up">gotówka netto</span>` : k(q.nd_ebitda, 1, "")}</b><span>Dług netto / EBITDA</span></div>
+      <div><b class="${q.fcf_ttm < 0 ? "down" : ""}">${th(q.fcf_ttm)}</b><span>FCF 4 kw. (dodatni w ${q.fcf_pos_years}/${q.fcf_years} lat)</span></div>`}
+      <div><b>${q.div_streak || 0}</b><span>Lat dywidendy z rzędu${q.payout != null ? ` · wypłata ${fmtNum(q.payout, 0)}% zysku${q.payout > 80 ? " ⚠" : ""}` : ""}</span></div>
+      <div><b>${q.cz_vs_med == null ? `<span class="dim">–</span>` : signed(q.cz_vs_med, 0)}</b><span>C/Z na tle 5 lat (mediana ${k(q.cz_med5, 1, "")})</span></div>
+      <div><b>${q.shares_3y == null ? `<span class="dim">–</span>` : signed(q.shares_3y, 1)}</b><span>Liczba akcji w 3 lata</span></div>
+      ${q.altman != null ? `<div><b>${esc(q.altman_rating || "")}</b><span>Altman EM-Score ${fmtNum(q.altman, 1)}</span></div>` : ""}
+    </div>${fs}${tbl}
+    <p class="dim chart-note">Sprawozdania kwartalne z Biznesradar (tys. zł, przeliczone na zł). EBITDA = EBIT + amortyzacja, FCF = przepływy operacyjne − CAPEX. „Niespodzianki” względem oczekiwań analityków nie pokazujemy – konsensusy nie są dostępne bezpłatnie.</p>`;
+}
+
 /* ocena analizy fundamentalnej - ta sama wartość co w kolumnie "Ocena AF" tabeli spółek */
 let drawerTicker = null;
 const AF_TONE = { "Warto": "up", "Obserwuj": "info", "Nie warto": "down" };
@@ -712,6 +780,7 @@ async function openCompany(t) {
     <p class="dim chart-note lvl-legend">${["good", "neutral", "warn", "bad"].map((l) => `${levelIcon(l)} ${LEVEL[l].toLowerCase()}`).join(" · ")}
       - najedź na wskaźnik, żeby zobaczyć objaśnienie. Progi są orientacyjne, to nie rekomendacja.</p>
     <section id="companyChart" aria-label="Wykres"><div class="chart-ctl"></div><div class="chart-body"></div></section>
+    ${qualityBlock(d)}
     <h3>Analiza fundamentalna</h3>
     ${afRatingControl(d)}
     ${d.analyses.length ? `<table>${d.analyses.map((a) => `<tr><td style="white-space:nowrap">${esc(a.date)}</td>
@@ -1432,7 +1501,21 @@ async function loadTrends() {
       ${rows.map((r) => `<tr><td>${tk(r.ticker)} <span class="dim nm">${esc(r.name || "")}</span></td><td class="n up">${r.funds_up || ""}</td><td class="n down">${r.funds_down || ""}</td>
         <td class="n">${signedMoney(r.value || null)}${r.unpriced ? ` <span class="dim" title="Część zmian bez wyceny">*</span>` : ""}</td><td class="n">${r.value_pct_mcap == null ? "" : signed(r.value_pct_mcap, 2)}</td>
         <td class="n">${signed(r.ret_3m, 1)}</td><td>${r.trend == null ? "" : r.trend ? `<span class="up">▲</span>` : `<span class="down">▼</span>`}</td><td class="dim">${dd(r.last)}</td></tr>`).join("")}</tbody></table>` : `<p class="dim">Brak.</p>`;
-  $("#trBody").innerHTML = `<div class="scard"><h2>Momentum 3–6 miesięcy ${d.trend_only ? `<span class="dim">– w trendzie wzrostowym</span>` : ""}</h2>${mom}</div>
+  const qual = d.quality && d.quality.length ? `<table class="stable"><thead><tr><th>#</th><th>Spółka</th><th>Sektor</th><th class="n" title="${esc(QUAL_DESC)}">Jakość</th>
+      <th class="n">F-Score</th><th class="n">ROE</th><th class="n" title="Najniższe ROE z ostatnich lat">ROE min.</th><th class="n">Dług/EBITDA</th>
+      <th class="n">FCF+ lat</th><th class="n">Dywidenda lat</th><th class="n">C/Z vs 5 lat</th><th class="n">Zysk r/r</th><th>Trend</th></tr></thead><tbody>
+      ${d.quality.map((r, i) => `<tr><td class="dim">${i + 1}</td><td>${tk(r.ticker)} <span class="dim nm">${esc(r.name || "")}</span></td><td class="dim">${esc(r.sector || "")}</td>
+        <td class="n" title="${esc((r.quality_parts || []).map((p) => `${p.name}: ${fmtNum(p.points, 0)}/${p.of} (${p.text})`).join("\n"))}"><span class="qbadge ${r.quality >= 70 ? "good" : r.quality >= 45 ? "mid" : "bad"}">${r.quality}</span></td>
+        <td class="n">${r.fscore == null ? "–" : r.fscore + "/9"}</td><td class="n">${r.roe == null ? "–" : fmtNum(r.roe, 1) + "%"}</td>
+        <td class="n">${r.roe_min5 == null ? "–" : fmtNum(r.roe_min5, 1) + "%"}</td>
+        <td class="n">${r.bank ? `<span class="dim">bank</span>` : r.net_cash ? `<span class="up">gotówka</span>` : r.nd_ebitda == null ? "–" : fmtNum(r.nd_ebitda, 1)}</td>
+        <td class="n">${r.fcf_years ? `${r.fcf_pos_years}/${r.fcf_years}` : "–"}</td><td class="n">${r.div_streak || ""}</td>
+        <td class="n">${r.cz_vs_med == null ? "–" : signed(r.cz_vs_med, 0)}</td><td class="n">${signed(r.np_ttm_yoy, 0)}</td>
+        <td>${r.trend == null ? "" : r.trend ? `<span class="up">▲</span>` : `<span class="down">▼</span>`}</td></tr>`).join("")}</tbody></table>
+      <p class="dim small">${d.n_quality} płynnych spółek ma ocenę. ${esc(QUAL_DESC)} Najedź na ocenę, żeby zobaczyć punkty.</p>`
+    : `<p class="dim">Brak ocen jakości – sprawozdania finansowe pobierają się raz w tygodniu.</p>`;
+  $("#trBody").innerHTML = `<div class="scard"><h2>Jakość biznesu <span class="dim">– długi termin (1–5 lat)</span></h2>${qual}</div>
+    <div class="scard"><h2>Momentum 3–6 miesięcy ${d.trend_only ? `<span class="dim">– w trendzie wzrostowym</span>` : ""}</h2>${mom}</div>
     <div class="scard"><h2>Rotacja sektorowa <span class="dim">– kto od miesiąca wygrywa z WIG</span></h2>${sec}</div>
     <div class="mcols"><div class="scard"><h2>Fundusze zwiększają udziały</h2>${fundTable(d.funds_buy)}</div>
       <div class="scard"><h2>Fundusze zmniejszają udziały</h2>${fundTable(d.funds_sell)}</div></div>

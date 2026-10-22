@@ -467,6 +467,65 @@ def parse_espi_text(cat, text, title, pdfs, ts=""):
 
 # ---------------- akcjonariat (tygodniowo) ----------------
 
+# pozycje sprawozdań zapisywane w bazie (pełna lista ma ok. 70 pozycji na 74 kwartały - niepotrzebne)
+FIN_FIELDS = {
+    "IncomeRevenues", "IncomeGrossProfit", "IncomeEBIT", "IncomeEBITDA", "IncomeNetProfit", "IncomeShareholderNetProfit",
+    "IncomeNetIntrestIncome", "IncomeNetFeeExpense", "IncomeNetoperatingProfit",  # banki
+    "BalanceTotalAssets", "BalanceCapital", "BalanceCurrentAssets", "BalanceCurrentLiabilities", "BalanceNoncurrentLiabilities",
+    "BalanceCash", "BalanceCurrentInvestments", "BalanceNoncurrentBorrowings", "BalanceNoncurrentObligations", "BalanceNoncurrentLeasing",
+    "BalanceCurrentBorrowings", "BalanceCurrentObligations", "BalanceCurrentLeasing",
+    "BalanceOwnCapital",  # kapitał własny banku
+    "CashflowOperatingCashflow", "CashflowAmortization", "CashflowCapex", "CashflowDividend", "CashflowStockBuyback",
+    "CashflowShareCapitalCash",
+    "ShareAmount", "CZ", "Z", "WK", "CWK", "EVEBITDA"}
+FIN_KEEP_ALL = {"CashflowDividend", "ShareAmount"}  # do serii lat z dywidendą i zmiany liczby akcji - cała historia
+FIN_QUARTERS = 24
+
+
+def collect_financials(con, stats, limit=None, force=False):
+    """Kwartalne sprawozdania (rachunek wyników, bilans, przepływy), wskaźniki wartości rynkowej i rating
+    (Piotroski F-Score, Altman EM-Score) z Biznesradar. Pobieramy tylko spółki z nowym raportem (inny okres niż
+    zapisany - wg wskaźników z Biznesradar), dawno nieodświeżane (90 dni) albo bez danych."""
+    rows = con.execute(
+        "SELECT c.ticker, c.slug, r.report, m.last_period, m.fetched FROM companies c LEFT JOIN ratios r ON r.ticker=c.ticker "
+        "LEFT JOIN fin_meta m ON m.ticker=c.ticker WHERE c.slug IS NOT NULL").fetchall()
+    old = (date.today() - timedelta(days=90)).isoformat()
+    todo = [r for r in rows if force or not r["fetched"] or (r["report"] and r["report"] != r["last_period"])
+            or r["fetched"] < old]
+    todo.sort(key=lambda r: (r["fetched"] is not None, r["fetched"] or ""))
+    if limit:
+        todo = todo[:limit]
+    if not todo:
+        return
+    log.info("[3/4] Sprawozdania finansowe i rating: %s spółek (ok. %s min)", len(todo), round(len(todo) * 5 * 1.9 / 60))
+    ok = 0
+    for i, r in enumerate(todo, 1):
+        try:
+            d = br.fetch_financials(r["slug"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("Sprawozdania %s: %s", r["ticker"], e)
+            continue
+        periods = sorted({p for kind in ("income", "balance", "cashflow", "market") for f in d[kind].values() for p in f})
+        if not periods:
+            con.execute("INSERT OR REPLACE INTO fin_meta(ticker, last_period, fetched) VALUES(?,?,?)",
+                        (r["ticker"], r["report"], date.today().isoformat()))
+            continue
+        keep = set(periods[-FIN_QUARTERS:])
+        batch = [(r["ticker"], p, f, v) for kind in ("income", "balance", "cashflow", "market") for f, vals in d[kind].items()
+                 if f in FIN_FIELDS for p, v in vals.items() if p in keep or f in FIN_KEEP_ALL]
+        con.execute("DELETE FROM fin_q WHERE ticker=?", (r["ticker"],))
+        con.executemany("INSERT OR REPLACE INTO fin_q VALUES(?,?,?,?)", batch)
+        rt = d.get("rating") or {}
+        con.execute("INSERT OR REPLACE INTO fin_meta VALUES(?,?,?,?,?,?,?)",
+                    (r["ticker"], r["report"] or periods[-1], date.today().isoformat(), rt.get("fscore"),
+                     json.dumps(rt.get("fscore_items") or [], ensure_ascii=False), rt.get("altman"), rt.get("altman_rating")))
+        con.commit()
+        ok += 1
+        if i % 25 == 0:
+            log.info("      sprawozdania: %s/%s", i, len(todo))
+    stats["financials"] = ok
+
+
 def collect_companies(con, stats, limit=None):
     q = "SELECT ticker, slug FROM companies WHERE slug IS NOT NULL ORDER BY (profile_updated IS NOT NULL), profile_updated"
     rows = con.execute(q).fetchall()
@@ -513,7 +572,7 @@ def store_wz_snapshots(con):
 
 
 def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, ofe_only=False, ohlc_days=None,
-        bankier_only=False, reparse=False, quick=False):
+        bankier_only=False, reparse=False, quick=False, financials=None):
     setup_logging()
     lock = _lock()
     if lock is False:
@@ -522,7 +581,7 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
     db.init()
     stats = {}
     con = db.connect()
-    kind = ("quick" if quick else "sesje" if ohlc_days else "reparse" if reparse else "bankier" if bankier_only else "ofe" if ofe_only else "backfill" if since
+    kind = ("financials" if financials else "quick" if quick else "sesje" if ohlc_days else "reparse" if reparse else "bankier" if bankier_only else "ofe" if ofe_only else "backfill" if since
             else ("weekly" if weekly else "daily"))
     run_id = con.execute("INSERT INTO runs(started, kind, status) VALUES(?,?,?)", (now(), kind, "running")).lastrowid
     con.commit()
@@ -547,6 +606,9 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
             stats.update(flows.rebuild_changes(con))
             stats.update(flows.fill_prices(con))
             return status, stats
+        if financials:  # tylko sprawozdania finansowe i rating (pierwsze pobranie albo odświeżenie)
+            collect_financials(con, stats, force=financials == "all")
+            return status, stats
         if bankier_only:  # tylko załączniki raportów z archiwum gpw.pl (jednorazowe uzupełnienie historii)
             fetch_bankier_attachments(con, stats)
             stats.update(flows.rebuild_changes(con))
@@ -570,6 +632,7 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
         due = not last_weekly or (date.today() - date.fromisoformat(last_weekly[0])).days >= 6
         if (weekly or due or limit) and not ofe_only:
             collect_companies(con, stats, limit)
+            collect_financials(con, stats, limit)
         if weekly or due or since or ofe_only:
             ofe.collect(con, stats)
         log.info("[4/4] Liczę zmiany stanu posiadania i ich wartość...")
@@ -607,10 +670,12 @@ if __name__ == "__main__":
                     help="tylko załączniki PDF raportów z archiwum gpw.pl/newconnect.pl - pobrane z Bankier.pl")
     ap.add_argument("--reparse", action="store_true",
                     help="ponownie odczytaj zapisane raporty art. 69 / MAR (po poprawce parsera) i przelicz zmiany")
+    ap.add_argument("--financials", nargs="?", const="new", choices=["new", "all"],
+                    help="tylko sprawozdania finansowe i rating: new = spółki z nowym raportem, all = wszystkie")
     ap.add_argument("--quick", action="store_true",
                     help="szybkie pobranie w trakcie sesji: notowania, stopy zwrotu i nowe komunikaty")
     a = ap.parse_args()
     st, _ = run(weekly=a.weekly, limit=a.limit, skip_espi=a.skip_espi, since=a.since, max_pages=a.max_pages,
                 ofe_only=a.ofe, ohlc_days=a.ohlc_history, bankier_only=a.bankier,
-                reparse=a.reparse, quick=a.quick)
+                reparse=a.reparse, quick=a.quick, financials=a.financials)
     sys.exit(0 if st in ("ok", "busy") else 1)

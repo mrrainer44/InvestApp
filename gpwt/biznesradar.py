@@ -292,3 +292,74 @@ def fetch_price_history(slug, page=1):
         return []
     html = http.get(f"/notowania-historyczne/{slug}")
     return parse_price_history(html) if html else []
+
+
+# ---- sprawozdania finansowe i rating (raporty kwartalne; komórki "premium" pomijamy - to treść płatna) ----
+
+FIN_PAGES = {"income": "/raporty-finansowe-rachunek-zyskow-i-strat/{slug},Q",
+             "balance": "/raporty-finansowe-bilans/{slug},Q",
+             "cashflow": "/raporty-finansowe-przeplywy-pieniezne/{slug},Q",
+             "market": "/wskazniki-wartosci-rynkowej/{slug}"}
+
+
+def parse_report_table(html):
+    """Tabela report-table: ({pole: {okres "2026/Q2": wartość}}, [okresy]). Wartości z oznaczeniem premium pomijamy."""
+    soup = _soup(html)
+    t = soup.find("table", class_="report-table")
+    if t is None:
+        return {}, []
+    rows = t.find_all("tr")
+    periods = []
+    for c in rows[0].find_all(["th", "td"]):
+        m = re.match(r"(\d{4}/Q[1-4])", c.get_text(" ", strip=True))
+        periods.append(m.group(1) if m else None)
+    out = {}
+    for tr in rows[1:]:
+        field = tr.get("data-field")
+        if not field or field == "PrimaryReport":
+            continue
+        vals = {}
+        for p, td in zip(periods, tr.find_all(["th", "td"])):
+            if not p:
+                continue
+            v = td.select_one(".value")
+            if v is None or v.select_one(".premium-value"):
+                continue
+            x = num(v.get_text(" ", strip=True).replace("\xa0", " "))
+            if x is not None:
+                vals[p] = x
+        if vals:
+            out[field] = vals
+    return out, [p for p in periods if p]
+
+
+def parse_rating(html):
+    """Strona /rating: Piotroski F-Score (9 kryteriów) i Altman EM-Score z ratingiem."""
+    soup = _soup(html)
+    res = {"fscore_items": []}
+    for tb in soup.find_all("table", class_="rating-table"):
+        for tr in tb.find_all("tr"):
+            if tr.select_one(".premium-value"):
+                continue
+            c = [x.get_text(" ", strip=True) for x in tr.find_all(["th", "td"])]
+            if len(c) < 3:
+                continue
+            if c[0] == "Altman EM-Score":
+                res["altman"] = num(c[2])
+            elif c[0] == "Rating":
+                res["altman_rating"] = c[2] or None
+            elif c[0] == "Piotroski F-Score":
+                res["fscore"] = int(num(c[2])) if num(c[2]) is not None else None
+            elif c[2] in ("0", "1") and c[0] not in ("Wskaźnik",):
+                res["fscore_items"].append({"name": c[0], "value": c[1], "ok": c[2] == "1"})
+    return res
+
+
+def fetch_financials(slug):
+    data = {}
+    for kind, path in FIN_PAGES.items():
+        html = http.get(path.format(slug=slug))
+        data[kind] = parse_report_table(html)[0] if html else {}
+    html = http.get(f"/rating/{slug}")
+    data["rating"] = parse_rating(html) if html else {}
+    return data
