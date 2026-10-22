@@ -206,6 +206,9 @@ const layoutKey = "companies_layout";
 const currentLayout = () => ({
   layout: tblCompanies.getColumnLayout().map(({ field, width, visible }) => ({ field, width, visible })),
   sort: tblCompanies.getSorters().map((s) => ({ column: s.field, dir: s.dir })),
+  // filtry pod nagłówkami, rynek i wyszukiwanie - widok "Portfel" to zwykle filtr "W portfelu = tak"
+  filters: tblCompanies.getHeaderFilters().map((f) => ({ field: f.field, value: f.value })),
+  market, q: $("#q").value,
 });
 function storeWorking() {
   if (!tblCompanies || activeView) return;
@@ -219,7 +222,9 @@ function setActiveView(name) {
   api("/api/settings/companies_active_view", { method: "PUT", body: { name } }).catch(() => {});
 }
 
-function applyLayout(saved) {
+// isView: zapisany widok - kolumny dodane do aplikacji po jego zapisaniu są w nim ukryte (widok wygląda tak,
+// jak go zapisano); w widoku bieżącym nowe kolumny pokazują się, żeby było je widać
+function applyLayout(saved, isView = false) {
   if (!saved || !saved.layout) return;
   const byField = Object.fromEntries(tblCompanies.getColumns().map((c) => [c.getField(), c]));
   // kolejność
@@ -237,8 +242,17 @@ function applyLayout(saved) {
   BUILTIN.forEach((c, i) => {
     if (known.has(c.field) || !byField[c.field] || i === 0) return;
     tblCompanies.moveColumn(c.field, BUILTIN[i - 1].field, true);
+    if (isView) byField[c.field].hide();
   });
   if (saved.sort && saved.sort.length) tblCompanies.setSort(saved.sort.filter((s) => byField[s.column]));
+  if (saved.filters) {  // widoki zapisane przed tą wersją nie mają filtrów - zostawiamy bieżące
+    tblCompanies.clearHeaderFilter();
+    saved.filters.filter((f) => byField[f.field]).forEach((f) => tblCompanies.setHeaderFilterValue(f.field, f.value));
+    market = saved.market || "";
+    $$("[data-mkt]").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.mkt === market)));
+    $("#q").value = saved.q || "";
+    applyFilters();
+  }
 }
 
 async function loadCompanies() {
@@ -260,8 +274,8 @@ async function loadCompanies() {
     initialSort: [{ column: "mcap", dir: "desc" }], columnDefaults: { headerTooltip: true, resizable: true },
   });
   tblCompanies.on("tableBuilt", () => { defaultLayout = currentLayout();
-    applyLayout(activeView ? views[activeView] : saved); applyFilters();
-    ["columnMoved", "columnResized", "columnVisibilityChanged", "dataSorted"].forEach((e) => tblCompanies.on(e, saveLayout)); });
+    applyLayout(activeView ? views[activeView] : saved, !!activeView); applyFilters();
+    ["columnMoved", "columnResized", "columnVisibilityChanged", "dataSorted", "dataFiltered"].forEach((e) => tblCompanies.on(e, saveLayout)); });
   tblCompanies.on("cellEdited", async (cell) => {
     const key = CUSTOM_OF[cell.getField()];
     if (!key) return;
@@ -301,7 +315,11 @@ $("#viewSel").addEventListener("change", async (e) => {
   }
   if (!activeView) storeWorking();  // zmiany z ostatnich chwil, zanim przełączymy na zapisany widok
   setActiveView(views[v] ? v : "");
-  applyLayout(activeView ? views[activeView] : (workingLayout || defaultLayout));
+  applyLayout(activeView ? views[activeView] : (workingLayout || defaultLayout), !!activeView);
+  if (!activeView && !(workingLayout || {}).filters) {  // widok bieżący z poprzedniej wersji - bez filtrów zapisanego widoku
+    tblCompanies.clearHeaderFilter(); market = ""; $("#q").value = "";
+    $$("[data-mkt]").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.mkt === ""))); applyFilters();
+  }
   toast(activeView ? `Widok „${activeView}”` : "Widok bieżący");
 });
 $("#btnSaveView").addEventListener("click", async () => {
