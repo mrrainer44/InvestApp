@@ -598,6 +598,7 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
             return status, stats
         if quick:  # w trakcie sesji: notowania i nowe komunikaty (ok. minuty)
             collect_market_tables(con, stats, quick=True)
+            pressure.backfill_indices(con, 5, stats)  # zamknięcia indeksów z poprzednich sesji (archiwum gpw.pl)
             _market_context(con, stats)
             collect_espi(con, stats)
             reclassify_other(con, stats)

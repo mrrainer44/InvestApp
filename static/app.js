@@ -1060,7 +1060,6 @@ async function syncCompaniesPortfolio() {
 }
 
 async function loadPortfolio() {
-  loadMarket().then((m) => renderMarketStrip($("#pfMarket"), m)).catch(() => {});
   pfData = await api(`/api/portfolio?pid=${pfPid || ""}`);
   syncCompaniesPortfolio().catch(() => {});
   if (pfPid && !pfData.portfolios.some((p) => p.id === pfPid)) { setPfPid(null); return loadPortfolio(); }
@@ -1102,7 +1101,7 @@ function renderPortfolio(d) {
     <div class="kpi"><h3>Dziś</h3><div class="big">${signedMoney(T.today_pnl)}</div><p class="dim small">${signed(T.today_pct)}</p></div>
     <div class="kpi"><h3 title="Wynik minus zmiana WIG od dat Twoich zakupów (ważona kosztem pozycji)">Na tle WIG</h3>
       <div class="big">${signed(T.vs_wig, 1, " pp")}</div>
-      <p class="dim small">${T.wig_pct == null ? "Brak aktualnych notowań WIG – pojawią się po wieczornym pobraniu." : `WIG od Twoich zakupów: ${signed(T.wig_pct, 1)} (zamknięcie ${dd(d.wig_date)})`}</p></div>
+      <p class="dim small">${T.wig_pct == null ? "Brak aktualnych notowań WIG – pojawią się po wieczornym pobraniu." : `WIG od Twoich zakupów: ${signed(T.wig_pct, 1)} (${d.wig_live ? `bieżący, ${dd(d.wig_date.slice(0, 10))} ${d.wig_date.slice(11, 16)}` : `zamknięcie ${dd(d.wig_date)}`})`}</p></div>
     <div class="kpi"><h3>Zrealizowany wynik</h3><div class="big">${signedMoney(T.realized)}</div>
       <p class="dim small">ze sprzedanych pozycji</p></div>
   </div>`;

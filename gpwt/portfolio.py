@@ -164,9 +164,15 @@ def summary(con, portfolio_id=None):
     plans = {(r["portfolio_id"], r["ticker"]): dict(r) for r in con.execute("SELECT * FROM plans")}
     avg = _avg_turnover(con, day) if day else {}
     wig_last = (con.execute("SELECT MAX(date) FROM index_ohlc WHERE name='WIG'").fetchone() or [None])[0]
-    # WIG z archiwum gpw.pl jest dostępny po sesji; starszy niż tydzień = brak danych (nie porównujemy z zerem)
-    fresh = wig_last and day and (date.fromisoformat(day) - date.fromisoformat(wig_last)).days <= 7
-    wig_now = index_close(con, "WIG", today) if fresh else None
+    # zamknięcie z archiwum gpw.pl pojawia się dopiero wieczorem albo następnego dnia - w trakcie sesji i zaraz po niej
+    # bierzemy bieżącą wartość WIG z Biznesradar (market_live), jeśli jest nowsza
+    live = con.execute("SELECT value, ts FROM market_live WHERE key='WIG'").fetchone()
+    use_live = bool(live and live["value"] and (not wig_last or live["ts"][:10] > wig_last))
+    wig_ref = live["ts"][:10] if use_live else wig_last
+    # starsze niż tydzień = brak danych (nie porównujemy z zerem)
+    fresh = wig_ref and day and (date.fromisoformat(day) - date.fromisoformat(wig_ref)).days <= 7
+    wig_now = (live["value"] if use_live else index_close(con, "WIG", today)) if fresh else None
+    wig_asof = (live["ts"] if use_live else wig_last) if fresh else None
     prev = _sessions_back(con, 1)
 
     hold = {}
@@ -232,7 +238,7 @@ def summary(con, portfolio_id=None):
     rows.sort(key=lambda r: -(r["value"] or 0))
     return {
         "date": day, "as_of": con.execute("SELECT MAX(finished) FROM runs WHERE status='ok'").fetchone()[0],
-        "wig_date": wig_last, "portfolio_id": portfolio_id, "portfolios": breakdown,
+        "wig_date": wig_asof, "wig_live": use_live, "portfolio_id": portfolio_id, "portfolios": breakdown,
         "totals": _totals(rows, closed), "positions": rows, "alerts": alerts, "closed": closed,
         "dividends": _dividend_calendar(con, rows, today),
         "events": _events(con, rows),

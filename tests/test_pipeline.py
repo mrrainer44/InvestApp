@@ -516,6 +516,17 @@ def test_pipeline():
     assert pos["ticker"] == "PKO" and pos["qty"] == 150 and abs(pos["cost"] - (10000 + 10 + 5500)) < 1e-6
     assert pos["plan"]["thesis"] == "dywidenda" and pos["weight"] == 100
     assert abs(pos["wig_pct"] - 10.0) < 1e-6  # WIG 100 000 -> 110 000 od obu zakupów
+    # zamknięcia z dziś jeszcze nie ma w archiwum - bieżący WIG z Biznesradar (market_live)
+    dcon = db.connect()
+    dcon.execute("DELETE FROM index_ohlc WHERE name='WIG' AND date=?", (_d.today().isoformat(),))
+    dcon.execute("INSERT OR REPLACE INTO market_live VALUES('WIG', 121000, 0.5, ?, ?)", (f"{_d.today()} 12:30", f"{_d.today()}T12:31"))
+    dcon.commit()
+    pfl = cl.get("/api/portfolio").get_json()
+    assert pfl["wig_live"] and abs(pfl["positions"][0]["wig_pct"] - 21.0) < 1e-6, pfl["wig_date"]
+    dcon.execute("DELETE FROM market_live")
+    dcon.execute("INSERT OR REPLACE INTO index_ohlc VALUES('WIG',?,1,1,1,110000.0,0)", (_d.today().isoformat(),))
+    dcon.commit()
+    dcon.close()
     assert any(a["kind"] == "stop" and a["level"] == "critical" for a in pf["alerts"]), pf["alerts"]
     assert cl.post("/api/positions/sell", json={"ticker": "PKO", "qty": 500, "price": 1}).status_code == 400
     assert cl.post("/api/positions/sell", json={"ticker": "PKO", "qty": 120, "price": 120, "date": "2026-10-01"}).get_json()["ok"]
