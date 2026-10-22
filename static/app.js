@@ -796,7 +796,11 @@ function afRatingControl(d) {
 function syncAfRating(ticker, key, value) {
   if (drawerTicker === ticker) $$(`#drawerBody .af-rate[data-key="${key}"] button`).forEach((b) => b.setAttribute("aria-checked", String(b.dataset.v === value)));
   const r = tblCompanies?.getRow(ticker);
-  if (r && r.getData()[`c_${key}`] !== value) r.update({ [`c_${key}`]: value });
+  if (r && r.getData()[`c_${key}`] !== value) {
+    r.update({ [`c_${key}`]: value });
+    tblCompanies.refreshFilter();  // filtr np. "Ocena AF = Obserwuj" musi objąć zmieniony wiersz
+  }
+  if (companiesCache?.rows[ticker]) companiesCache.rows[ticker][`c_${key}`] = value;
 }
 document.addEventListener("click", async (e) => {
   const b = e.target.closest(".af-rate button"); if (!b || !drawerTicker) return;
@@ -1114,7 +1118,7 @@ async function syncCompaniesPortfolio() {
   }
   const upd = tblCompanies.getData().filter((r) => (r.pf || null) !== (held[r.ticker]?.names.join(", ") || null) || (held[r.ticker] && r.pf_qty !== held[r.ticker].qty))
     .map((r) => ({ ticker: r.ticker, pf: held[r.ticker]?.names.join(", ") || null, pf_qty: held[r.ticker]?.qty ?? null }));
-  if (upd.length) tblCompanies.updateData(upd);
+  if (upd.length) tblCompanies.updateData(upd).then(() => tblCompanies.refreshFilter());
 }
 
 async function loadPortfolio() {
