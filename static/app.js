@@ -212,7 +212,9 @@ const currentLayout = () => ({
 });
 function storeWorking() {
   if (!tblCompanies || activeView) return;
-  workingLayout = currentLayout();
+  // widok bieżący pamięta kolumny i sortowanie, ale nie filtry: po powrocie z zapisanego widoku (np. "Portfel" z filtrem
+  // "W portfelu") ma pokazać wszystkie spółki; filtry utrwala się w zapisanym widoku
+  workingLayout = { ...currentLayout(), filters: [], market: "", q: "" };
   api(`/api/settings/${layoutKey}`, { method: "PUT", body: workingLayout }).catch(() => {});
 }
 const saveLayout = debounce(storeWorking, 600);
@@ -275,7 +277,7 @@ async function loadCompanies() {
   });
   tblCompanies.on("tableBuilt", () => { defaultLayout = currentLayout();
     applyLayout(activeView ? views[activeView] : saved, !!activeView); applyFilters();
-    ["columnMoved", "columnResized", "columnVisibilityChanged", "dataSorted", "dataFiltered"].forEach((e) => tblCompanies.on(e, saveLayout)); });
+    ["columnMoved", "columnResized", "columnVisibilityChanged", "dataSorted"].forEach((e) => tblCompanies.on(e, saveLayout)); });
   tblCompanies.on("cellEdited", async (cell) => {
     const key = CUSTOM_OF[cell.getField()];
     if (!key) return;
@@ -316,7 +318,7 @@ $("#viewSel").addEventListener("change", async (e) => {
   if (!activeView) storeWorking();  // zmiany z ostatnich chwil, zanim przełączymy na zapisany widok
   setActiveView(views[v] ? v : "");
   applyLayout(activeView ? views[activeView] : (workingLayout || defaultLayout), !!activeView);
-  if (!activeView && !(workingLayout || {}).filters) {  // widok bieżący z poprzedniej wersji - bez filtrów zapisanego widoku
+  if (!activeView) {  // widok bieżący: bez filtrów zapisanego widoku (także gdy układ zapisała starsza wersja)
     tblCompanies.clearHeaderFilter(); market = ""; $("#q").value = "";
     $$("[data-mkt]").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.mkt === ""))); applyFilters();
   }
