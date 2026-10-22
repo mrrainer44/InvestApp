@@ -1137,7 +1137,7 @@ function renderPortfolio(d) {
       ${tk(a.ticker)} ${all ? pfTag(a.portfolio) : ""} ${esc(a.text)} ${a.ts ? `<span class="dim">${esc(dd(a.ts.slice(0, 10)))} ${esc(a.ts.slice(11, 16))}</span>` : ""}</li>`).join("")}</ul>`
     : `<p class="dim">Brak alertów – nic nie przebiło poziomów z planu, brak nowych komunikatów i transakcji insiderów.</p>`;
 
-  const rows = d.positions.map((p) => {
+  const rows = sortPositions(d.positions).map((p) => {
     const pl = p.plan || {}, toStop = pl.stop && p.close ? (p.close / pl.stop - 1) * 100 : null;
     const toTarget = pl.target && p.close ? (pl.target / p.close - 1) * 100 : null;
     const lvl = p.alerts.some((a) => a.level === "critical") ? "down" : p.alerts.some((a) => a.level === "warn") ? "warn" : "info";
@@ -1155,10 +1155,10 @@ function renderPortfolio(d) {
     </tr>
     <tr class="pf-detail" hidden><td colspan="${all ? 15 : 14}">${planBlock(p)}</td></tr>`;
   }).join("");
-  const table = d.positions.length ? `<table class="stable pf-table"><thead><tr><th>Spółka</th>${all ? "<th>Portfel</th>" : ""}<th class="n">Akcje</th>
-    <th class="n">Śr. cena</th><th class="n">Kurs</th><th class="n">Dziś</th><th class="n">Wartość</th><th class="n" title="Udział w ${all ? "wszystkich portfelach" : "portfelu"}">Udział</th>
-    <th class="n">Wynik</th><th class="n">Wynik %</th><th class="n">vs WIG</th><th class="n">Wyjście</th><th class="n">Cel</th>
-    <th class="n" title="Dni potrzebne na sprzedaż całej pozycji przy 20% średniego obrotu">Dni wyjścia</th><th></th></tr></thead>
+  const table = d.positions.length ? `<table class="stable pf-table"><thead><tr>${sth("ticker", "Spółka", "")}${all ? sth("portfolio", "Portfel", "") : ""}${sth("qty", "Akcje")}
+    ${sth("avg_price", "Śr. cena")}${sth("close", "Kurs")}${sth("chg", "Dziś")}${sth("value", "Wartość")}${sth("weight", "Udział", "n", `Udział w ${all ? "wszystkich portfelach" : "portfelu"}`)}
+    ${sth("pnl", "Wynik")}${sth("pnl_pct", "Wynik %")}${sth("vs_wig", "vs WIG")}${sth("to_stop", "Wyjście", "n", "Sortuje po odległości kursu od poziomu wyjścia")}${sth("to_target", "Cel", "n", "Sortuje po odległości do celu")}
+    ${sth("exit_days", "Dni wyjścia", "n", "Dni potrzebne na sprzedaż całej pozycji przy 20% średniego obrotu")}<th></th></tr></thead>
     <tbody>${rows}</tbody></table><p class="dim small">Kliknij wiersz, żeby zobaczyć plan i partie zakupu.</p>`
     : `<p class="dim">Nie masz otwartych pozycji.</p>`;
 
@@ -1185,6 +1185,24 @@ function renderPortfolio(d) {
     <div class="scard"><h2>Kalendarz dywidend</h2>${divs}</div>
     ${closed ? `<div class="scard">${closed}</div>` : ""}`;
 }
+
+// sortowanie tabeli Pozycje: klik w nagłówek, drugi klik odwraca; zapamiętane w przeglądarce
+let pfSort = (() => { try { return JSON.parse(localStorage.getItem("gpwt_pf_sort") || "null") || { key: "value", dir: -1 }; } catch { return { key: "value", dir: -1 }; } })();
+const PF_SORT_VAL = {
+  to_stop: (p) => p.plan?.stop && p.close ? (p.close / p.plan.stop - 1) * 100 : null,
+  to_target: (p) => p.plan?.target && p.close ? (p.plan.target / p.close - 1) * 100 : null,
+};
+function sortPositions(rows) {
+  const val = PF_SORT_VAL[pfSort.key] || ((p) => p[pfSort.key]);
+  return [...rows].sort((a, b) => {
+    const x = val(a), y = val(b);
+    if (x == null && y == null) return 0;
+    if (x == null) return 1;  // puste zawsze na końcu
+    if (y == null) return -1;
+    return (typeof x === "string" ? x.localeCompare(y, "pl") : x - y) * pfSort.dir;
+  });
+}
+const sth = (key, label, cls = "n", title = "") => `<th class="${cls} sortable${pfSort.key === key ? " sorted" : ""}" data-pfsort="${key}"${title ? ` title="${esc(title)}"` : ""}>${label}${pfSort.key === key ? (pfSort.dir > 0 ? " ▲" : " ▼") : ""}</th>`;
 
 function planBlock(p) {
   const pl = p.plan || {};
@@ -1282,6 +1300,14 @@ function portfolioDialog(p = null) {
 $("#pfAdd").addEventListener("click", () => addLotDialog());
 $("#pfSell").addEventListener("click", () => pfData && sellDialog());
 $("#pfBody").addEventListener("click", async (e) => {
+  const srt = e.target.closest("[data-pfsort]");
+  if (srt) {
+    const k = srt.dataset.pfsort;
+    // pierwszy klik: liczby malejąco (najlepszy wynik na górze), teksty rosnąco
+    pfSort = pfSort.key === k ? { key: k, dir: -pfSort.dir } : { key: k, dir: ["ticker", "portfolio"].includes(k) ? 1 : -1 };
+    try { localStorage.setItem("gpwt_pf_sort", JSON.stringify(pfSort)); } catch { /* brak pamięci */ }
+    renderPortfolio(pfData); return;
+  }
   const tab = e.target.closest("[data-pftab]");
   if (tab) { e.preventDefault(); setPfPid(+tab.dataset.pftab || null); loadPortfolio(); return; }
   const b = e.target.closest("button");
