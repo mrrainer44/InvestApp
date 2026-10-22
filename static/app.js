@@ -335,7 +335,7 @@ $("#viewSel").addEventListener("change", async (e) => {
       selectValue: activeView || Object.keys(views)[0], ok: "Usuń", danger: true });
     if (name && views[name]) {
       try {
-        const rest = { ...views }; delete rest[name];
+        const rest = { ...((await api("/api/settings/views")) || views) }; delete rest[name];
         await api("/api/settings/views", { method: "PUT", body: rest });
         views = rest;
         if (name === activeView) { setActiveView(""); applyLayout(workingLayout || defaultLayout); }
@@ -361,9 +361,11 @@ $("#btnSaveView").addEventListener("click", async () => {
   if (views[name] && name !== activeView && !await ask({ title: `Nadpisać widok „${name}”?`, ok: "Nadpisz", danger: true })) return;
   const fromWorking = !activeView, layout = currentLayout();
   try {
-    await api("/api/settings/views", { method: "PUT", body: { ...views, [name]: layout } });
+    // dokładamy do aktualnej listy z serwera (inna karta albo zmiana poza nią mogły ją zmienić)
+    const latest = { ...((await api("/api/settings/views")) || {}), [name]: layout };
+    await api("/api/settings/views", { method: "PUT", body: latest });
+    views = latest;
   } catch (err) { toast("Nie udało się zapisać widoku: " + err.message); return; }
-  views[name] = layout;
   if (fromWorking) {  // filtry przeszły do nowego widoku - widok bieżący wraca do wszystkich spółek
     workingLayout = { ...layout, filters: [], market: "", q: "" };
     api(`/api/settings/${layoutKey}`, { method: "PUT", body: workingLayout }).catch(() => {});
