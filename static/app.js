@@ -197,6 +197,30 @@ const customDef = (c) => {
   return def;
 };
 
+/* ---------- okienko pytania (zamiast prompt/confirm przeglądarki) ---------- */
+// ask({title, text, input: {value, placeholder, list}, select: [opcje], ok, danger}) -> Promise: tekst / true / null
+function ask(o) {
+  return new Promise((resolve) => {
+    const dlg = $("#askDlg"), f = $("#askForm");
+    f.innerHTML = `<h2>${esc(o.title)}</h2>${o.text ? `<p class="dim">${esc(o.text)}</p>` : ""}
+      ${o.input ? `<label class="fld"><span>${esc(o.input.label || "")}</span><input name="v" required maxlength="60" value="${esc(o.input.value || "")}"
+        placeholder="${esc(o.input.placeholder || "")}" ${o.input.list ? 'list="askList"' : ""} autofocus></label>
+        ${o.input.list ? `<datalist id="askList">${o.input.list.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>` : ""}` : ""}
+      ${o.select ? `<label class="fld"><span>${esc(o.selectLabel || "")}</span><select name="v">${o.select.map((x) => `<option ${x === o.selectValue ? "selected" : ""}>${esc(x)}</option>`).join("")}</select></label>` : ""}
+      <div class="dlg-actions"><button class="btn" value="cancel" formnovalidate>Anuluj</button>
+        <button class="btn ${o.danger ? "danger" : "primary"}" value="ok">${esc(o.ok || "OK")}</button></div>`;
+    let answered = false;
+    f.onsubmit = (e) => {
+      e.preventDefault();
+      answered = true;
+      const val = e.submitter?.value === "ok" ? (o.input || o.select ? (new FormData(f).get("v") || "").trim() || null : true) : null;
+      dlg.close(); resolve(val);
+    };
+    dlg.onclose = () => { if (!answered) resolve(null); };
+    dlg.showModal();
+  });
+}
+
 /* ---------- tabela spółek ---------- */
 let tblCompanies, market = "", views = {};
 // "Widok: bieżący" to własny układ użytkownika (companies_layout) - zapisywany na bieżąco, ale tylko gdy
@@ -212,9 +236,9 @@ const currentLayout = () => ({
 });
 function storeWorking() {
   if (!tblCompanies || activeView) return;
-  // widok bieżący pamięta kolumny i sortowanie, ale nie filtry: po powrocie z zapisanego widoku (np. "Portfel" z filtrem
-  // "W portfelu") ma pokazać wszystkie spółki; filtry utrwala się w zapisanym widoku
-  workingLayout = { ...currentLayout(), filters: [], market: "", q: "" };
+  // widok bieżący pamięta kolumny, sortowanie i własne filtry (także po odświeżeniu strony); filtry zapisanego widoku
+  // do niego nie przechodzą, a przy zapisie nowego widoku jego filtry przechodzą do tego widoku (patrz Zapisz widok)
+  workingLayout = currentLayout();
   api(`/api/settings/${layoutKey}`, { method: "PUT", body: workingLayout }).catch(() => {});
 }
 const saveLayout = debounce(storeWorking, 600);
@@ -277,7 +301,7 @@ async function loadCompanies() {
   });
   tblCompanies.on("tableBuilt", () => { defaultLayout = currentLayout();
     applyLayout(activeView ? views[activeView] : saved, !!activeView); applyFilters();
-    ["columnMoved", "columnResized", "columnVisibilityChanged", "dataSorted"].forEach((e) => tblCompanies.on(e, saveLayout)); });
+    ["columnMoved", "columnResized", "columnVisibilityChanged", "dataSorted", "dataFiltered"].forEach((e) => tblCompanies.on(e, saveLayout)); });
   tblCompanies.on("cellEdited", async (cell) => {
     const key = CUSTOM_OF[cell.getField()];
     if (!key) return;
@@ -306,31 +330,45 @@ function renderViewSelect() {
 $("#viewSel").addEventListener("change", async (e) => {
   const v = e.target.value;
   if (v === "__del") {
-    const name = prompt("Nazwa widoku do usunięcia:", activeView || Object.keys(views)[0] || "");
+    renderViewSelect();
+    const name = await ask({ title: "Usuń zapisany widok", select: Object.keys(views), selectLabel: "Widok",
+      selectValue: activeView || Object.keys(views)[0], ok: "Usuń", danger: true });
     if (name && views[name]) {
-      delete views[name];
-      await api("/api/settings/views", { method: "PUT", body: views });
-      if (name === activeView) { setActiveView(""); applyLayout(workingLayout || defaultLayout); }
-      toast("Usunięto widok");
+      try {
+        const rest = { ...views }; delete rest[name];
+        await api("/api/settings/views", { method: "PUT", body: rest });
+        views = rest;
+        if (name === activeView) { setActiveView(""); applyLayout(workingLayout || defaultLayout); }
+        toast(`Usunięto widok „${name}”`);
+      } catch (err) { toast("Nie udało się usunąć widoku: " + err.message); }
     }
     renderViewSelect(); return;
   }
   if (!activeView) storeWorking();  // zmiany z ostatnich chwil, zanim przełączymy na zapisany widok
   setActiveView(views[v] ? v : "");
   applyLayout(activeView ? views[activeView] : (workingLayout || defaultLayout), !!activeView);
-  if (!activeView) {  // widok bieżący: bez filtrów zapisanego widoku (także gdy układ zapisała starsza wersja)
+  if (!activeView && !(workingLayout || {}).filters) {  // układ ze starszej wersji (bez filtrów) - bez filtrów widoku
     tblCompanies.clearHeaderFilter(); market = ""; $("#q").value = "";
     $$("[data-mkt]").forEach((x) => x.setAttribute("aria-pressed", String(x.dataset.mkt === ""))); applyFilters();
   }
   toast(activeView ? `Widok „${activeView}”` : "Widok bieżący");
 });
 $("#btnSaveView").addEventListener("click", async () => {
-  const name = prompt("Nazwa widoku (np. Dywidendowe, Skaner insiderów). Podaj istniejącą nazwę, żeby ją nadpisać:",
-    activeView || "");
+  const name = await ask({ title: "Zapisz widok", ok: "Zapisz",
+    text: "Zapisują się kolumny, ich kolejność i szerokość, sortowanie, filtry pod nagłówkami, rynek i wyszukiwanie. Wpisz istniejącą nazwę, żeby ją nadpisać.",
+    input: { label: "Nazwa widoku", value: activeView || "", placeholder: "np. Obserwowane, Dywidendowe", list: Object.keys(views) } });
   if (!name) return;
-  views[name] = currentLayout();
-  await api("/api/settings/views", { method: "PUT", body: views });
-  setActiveView(name); renderViewSelect(); toast("Zapisano widok");
+  if (views[name] && name !== activeView && !await ask({ title: `Nadpisać widok „${name}”?`, ok: "Nadpisz", danger: true })) return;
+  const fromWorking = !activeView, layout = currentLayout();
+  try {
+    await api("/api/settings/views", { method: "PUT", body: { ...views, [name]: layout } });
+  } catch (err) { toast("Nie udało się zapisać widoku: " + err.message); return; }
+  views[name] = layout;
+  if (fromWorking) {  // filtry przeszły do nowego widoku - widok bieżący wraca do wszystkich spółek
+    workingLayout = { ...layout, filters: [], market: "", q: "" };
+    api(`/api/settings/${layoutKey}`, { method: "PUT", body: workingLayout }).catch(() => {});
+  }
+  setActiveView(name); renderViewSelect(); toast(`Zapisano widok „${name}”`);
 });
 
 $("#q").addEventListener("input", debounce(applyFilters, 150));
@@ -357,7 +395,7 @@ $("#colList").addEventListener("change", (e) => {
 $("#colList").addEventListener("click", async (e) => {
   const key = e.target.dataset.del; if (!key) return;
   e.preventDefault();
-  if (!confirm("Usunąć kolumnę razem ze wszystkimi wpisanymi w niej wartościami?")) return;
+  if (!await ask({ title: "Usunąć kolumnę?", text: "Kolumna zniknie razem ze wszystkimi wpisanymi w niej wartościami.", ok: "Usuń", danger: true })) return;
   await api(`/api/columns/${key}`, { method: "DELETE" });
   $("#dlgCols").close(); await loadCompanies(); toast("Usunięto kolumnę");
 });
@@ -1317,7 +1355,7 @@ $("#pfBody").addEventListener("click", async (e) => {
   if (b?.dataset.pfrename) { portfolioDialog(pfData.portfolios.find((p) => p.id === +b.dataset.pfrename)); return; }
   if (b?.dataset.pfdel) {
     const p = pfData.portfolios.find((x) => x.id === +b.dataset.pfdel);
-    if (!confirm(`Usunąć portfel „${p.name}”? Da się usunąć tylko pusty portfel (bez pozycji i historii sprzedaży).`)) return;
+    if (!await ask({ title: `Usunąć portfel „${p.name}”?`, text: "Da się usunąć tylko pusty portfel (bez pozycji i historii sprzedaży).", ok: "Usuń", danger: true })) return;
     try { await api(`/api/portfolios/${p.id}`, { method: "DELETE" }); setPfPid(null); toast("Usunięto portfel"); loadPortfolio(); }
     catch (err) { toast(JSON.parse(err.message.replace(/^\d+ /, "") || "{}").msg || err.message); }
     return;
@@ -1328,7 +1366,7 @@ $("#pfBody").addEventListener("click", async (e) => {
   }
   if (b?.dataset.lotedit) { lotEditDialog(+b.dataset.lotedit); return; }
   if (b?.dataset.lotdel) {
-    if (!confirm("Usunąć tę partię z portfela? Tego nie da się cofnąć.")) return;
+    if (!await ask({ title: "Usunąć tę partię z portfela?", text: "Tego nie da się cofnąć.", ok: "Usuń", danger: true })) return;
     await api(`/api/positions/${b.dataset.lotdel}`, { method: "DELETE" }); toast("Usunięto"); loadPortfolio(); return;
   }
   const row = e.target.closest("tr.pf-row");
