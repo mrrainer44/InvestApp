@@ -1325,7 +1325,7 @@ function pfFoldable() {
     const h = $("h2", card);
     if (!h) return;
     const key = h.firstChild.textContent.trim();
-    const n = $$("tbody > tr:not(.pf-detail), ul.alerts > li", card).length;
+    const n = $$(":scope > table > tbody > tr:not(.pf-detail), :scope > ul.alerts > li", card).length;
     card.dataset.fold = key;
     card.classList.toggle("folded", pfFold.has(key));
     h.classList.add("fold-h");
