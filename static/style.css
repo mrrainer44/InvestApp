@@ -316,6 +316,13 @@ ul.alerts li.al-critical { font-weight: 600; }
 .scard details summary { cursor: pointer; font-weight: 600; margin: 4px 0 8px; }
 .scard-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 6px; }
 .scard-head h2 { margin: 0; }
+.fold-h { cursor: pointer; user-select: none; }
+.fold-h::before { content: "▾"; display: inline-block; width: 1em; color: var(--muted); transition: transform .15s; }
+.folded .fold-h::before { transform: rotate(-90deg); }
+.fold-h .fold-n { display: none; font-weight: 400; font-size: 13px; color: var(--muted); }
+.folded .fold-h .fold-n { display: inline; }
+.scard.folded > :not(.scard-head):not(h2) { display: none; }
+.scard.folded h2 { margin: 0; }
 .seg.sm button { padding: 3px 10px; font-size: 12.5px; }
 dialog.dlg { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); color: var(--ink);
   padding: 18px 22px; width: min(640px, calc(100vw - 32px)); box-shadow: 0 18px 50px rgba(16, 24, 32, .25); }

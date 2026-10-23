@@ -1315,7 +1315,38 @@ function renderPortfolio(d) {
     ${calendarCard({ from: today(), to: new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), events: d.events || [], schedules: 0, rpp_year_known: true }, 30, { onlyHeld: true, title: "Wydarzenia Twoich spółek – 30 dni" })}
     <div class="scard"><h2>Kalendarz dywidend</h2>${divs}</div>
     ${closed ? `<div class="scard">${closed}</div>` : ""}`;
+  pfFoldable();
 }
+
+// zwijanie kart Moich spółek: klik w tytuł karty; zwinięte karty zapamiętane w przeglądarce
+const pfFold = new Set((() => { try { return JSON.parse(localStorage.getItem("gpwt_pf_fold") || "[]"); } catch { return []; } })());
+function pfFoldable() {
+  $$("#pfBody > .scard").forEach((card) => {
+    const h = $("h2", card);
+    if (!h) return;
+    const key = h.firstChild.textContent.trim();
+    const n = $$("tbody > tr:not(.pf-detail), ul.alerts > li", card).length;
+    card.dataset.fold = key;
+    card.classList.toggle("folded", pfFold.has(key));
+    h.classList.add("fold-h");
+    h.tabIndex = 0;
+    h.setAttribute("role", "button");
+    h.setAttribute("aria-expanded", !pfFold.has(key));
+    h.title = "Kliknij, żeby zwinąć lub rozwinąć";
+    if (n) h.insertAdjacentHTML("beforeend", ` <span class="fold-n">(${n})</span>`);
+  });
+}
+function pfToggleFold(h) {
+  const card = h.closest(".scard"), key = card.dataset.fold;
+  pfFold.has(key) ? pfFold.delete(key) : pfFold.add(key);
+  try { localStorage.setItem("gpwt_pf_fold", JSON.stringify([...pfFold])); } catch { /* brak pamięci */ }
+  card.classList.toggle("folded", pfFold.has(key));
+  h.setAttribute("aria-expanded", !pfFold.has(key));
+}
+$("#pfBody").addEventListener("keydown", (e) => {
+  const h = e.target.closest(".fold-h");
+  if (h && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); pfToggleFold(h); }
+});
 
 // sortowanie tabeli Pozycje: klik w nagłówek, drugi klik odwraca; zapamiętane w przeglądarce
 let pfSort = (() => { try { return JSON.parse(localStorage.getItem("gpwt_pf_sort") || "null") || { key: "value", dir: -1 }; } catch { return { key: "value", dir: -1 }; } })();
@@ -1450,6 +1481,8 @@ function portfolioDialog(p = null) {
 $("#pfAdd").addEventListener("click", () => addLotDialog());
 $("#pfSell").addEventListener("click", () => pfData && sellDialog());
 $("#pfBody").addEventListener("click", async (e) => {
+  const fh = e.target.closest(".fold-h");
+  if (fh && !e.target.closest("a, button")) { pfToggleFold(fh); return; }
   if (e.target.closest("[data-aladd]")) { alertAddDialog(); return; }
   const srt = e.target.closest("[data-pfsort]");
   if (srt) {
