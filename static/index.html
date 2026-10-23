@@ -38,6 +38,7 @@
 
   <dialog id="pfDlg" class="dlg"><form method="dialog" id="pfForm"></form></dialog>
   <dialog id="askDlg" class="dlg"><form method="dialog" id="askForm"></form></dialog>
+  <dialog id="flagDlg" class="dlg flag-dlg" aria-label="Flaga spółki"></dialog>
   <datalist id="tickerList"></datalist>
 
   <section id="view-session" hidden>
@@ -62,6 +63,7 @@
           <option value="100000">100 tys. zł</option>
         </select></label>
       <label class="dim">Moje spółki z kolumny <select id="sesWatch"></select></label>
+      <label class="dim" title="Spółki z red flag są domyślnie pomijane (poza tymi, które masz w portfelu). Szerokość rynku i obroty liczymy zawsze dla całego rynku."><input type="checkbox" id="sesShowRed"> pokaż red flag <span id="sesRedN"></span></label>
       <span class="grow"></span>
       <span id="sesAsOf" class="dim"></span>
       <button class="btn primary" id="sesRefresh">Odśwież teraz</button>
@@ -80,6 +82,7 @@
         <select id="trMinNc"><option value="10000">10 tys. zł</option><option value="30000">30 tys. zł</option>
           <option value="100000">100 tys. zł</option></select></label>
       <label class="dim"><input type="checkbox" id="trTrend" checked> tylko w trendzie wzrostowym</label>
+      <label class="dim" title="Spółki z red flag są domyślnie pomijane (poza tymi, które masz w portfelu)."><input type="checkbox" id="trShowRed"> pokaż red flag <span id="trRedN"></span></label>
       <label class="dim">Fundusze z okresu
         <select id="trDays"><option value="183">6 mies.</option><option value="365">12 mies.</option></select></label>
       <span class="grow"></span><span id="trAsOf" class="dim"></span>

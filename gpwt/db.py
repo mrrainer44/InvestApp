@@ -59,6 +59,8 @@ CREATE TABLE IF NOT EXISTS fin_meta(
   ticker TEXT PRIMARY KEY, last_period TEXT, fetched TEXT, fscore INTEGER, fscore_items TEXT, altman REAL,
   altman_rating TEXT
 );
+CREATE TABLE IF NOT EXISTS company_flags(
+  ticker TEXT PRIMARY KEY, flag TEXT NOT NULL, note TEXT, updated TEXT);
 CREATE TABLE IF NOT EXISTS price_alerts(
   id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL, kind TEXT NOT NULL, price REAL NOT NULL, note TEXT,
   created TEXT, active INTEGER DEFAULT 1, triggered_at TEXT, triggered_price REAL, notified INTEGER DEFAULT 0

@@ -118,6 +118,8 @@ def metrics(f, meta=None, cz_now=None):
     x["net_cash"] = bool(nd is not None and nd < 0)
     cap = (eq0 or 0) + (nd or 0)
     x["roic"] = ebit_ttm * 0.81 / cap * 100 if ebit_ttm is not None and cap > 0 and not bank and eq0 else None
+    ca, cl = g("BalanceCurrentAssets", p0), g("BalanceCurrentLiabilities", p0)
+    x["current_ratio"] = ca / cl if ca is not None and cl and cl > 0 and not bank else None
 
     # historia na koniec lat (Q4): ROE, marża netto, FCF, dywidendy
     y0 = int(p0[:4])

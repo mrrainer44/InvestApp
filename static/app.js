@@ -98,9 +98,92 @@ const cmfFmt = (cell) => { const v = cell.getValue(); if (v == null) return `<sp
 const CMF_TIP = "Przewaga kupujących w obrocie (Chaikin Money Flow): +100% = sesje kończyły się na maksimum dnia, −100% = na minimum. Powyżej +10% akumulacja, poniżej −10% dystrybucja.";
 const afFmt = (cell) => cell.getValue()
   ? `<span class="af-yes" title="Analiz: ${cell.getRow().getData().af_count}">✓ ${esc(cell.getValue())}</span>` : `<span class="dim">–</span>`;
+/* ---------- flagi spółek: green / neutral / red flag ---------- */
+const FLAG = { green: "Green flag", neutral: "Neutral", red: "Red flag" };
+const FLAG_RANK = { green: 0, neutral: 1, red: 2 };
+const flagPill = (f, manual) => `<span class="flag flag-${f || "neutral"}" title="${manual ? "Flaga ustawiona ręcznie" : "Flaga automatyczna"}">${FLAG[f] || FLAG.neutral}${manual ? " ✎" : ""}</span>`;
+const flagColFmt = (cell) => flagPill(cell.getValue(), cell.getRow().getData().flag_manual);
+// objaśnienia kryteriów prostym językiem: [tytuł, co sprawdzamy]
+const FLAG_HELP = {
+  rev: ["Czy sprzedaż rośnie", "Zielone: sprzedaż rośnie średnio ponad 5% rocznie przez 3 lata. Czerwone: spada drugi rok z rzędu."],
+  cfo: ["Czy zysk to prawdziwa gotówka", "Ile gotówki z działalności przypada na 1 zł zysku w księgach. Zielone: co najmniej 0,90 zł przez 3 lata. Czerwone: poniżej 0,70 zł przez 2 lata – zysk może być tylko „na papierze”."],
+  margin: ["Czy firma zarabia na sprzedaży tak dobrze jak wcześniej", "Ile groszy zysku operacyjnego zostaje z każdej złotówki sprzedaży. Zielone: tyle samo albo więcej niż 2 lata temu. Czerwone: spadek o ponad 3 punkty procentowe dwa lata z rzędu."],
+  roe: ["Czy pieniądze akcjonariuszy dobrze pracują (ROE)", "Zysk w relacji do kapitału właścicieli. Zielone: co najmniej 12% rocznie w każdym z 3 lat. Czerwone: poniżej 8% w każdym z 3 lat."],
+  core: ["Czy zysk pochodzi z podstawowej działalności", "Czerwone: zysk netto dużo wyższy od zysku ze sprzedaży – wynik ratują zdarzenia jednorazowe (np. sprzedaż majątku, przeszacowania). Zielone: zysk netto wynika z podstawowej działalności."],
+  debt: ["Zadłużenie", "Ile lat zysku operacyjnego (przed amortyzacją) potrzeba, żeby spłacić dług. Zielone: poniżej 1,5 roku albo więcej gotówki niż długu. Czerwone: ponad 3 lata."],
+  liq: ["Czy starcza na bieżące rachunki", "Majątek, który szybko zamienia się w gotówkę, w relacji do długów płatnych w ciągu roku. Zielone: ponad 1,2. Czerwone: poniżej 1."],
+  issue: ["Czy spółka nie „rozwadnia” akcjonariuszy", "Nowe akcje zmniejszają Twój udział w zyskach. Zielone: liczba akcji w 3 lata wzrosła najwyżej o 2%. Czerwone: wzrosła o ponad 10%, a sprzedaż nie rosła szybciej."],
+  insider: ["Co zarząd robi ze swoimi akcjami", "Zielone: w ostatnich 6 miesiącach zarząd tylko kupował. Czerwone: w ciągu 90 dni sprzedawały co najmniej 2 osoby."],
+  div: ["Czy dywidenda jest z zarobionej gotówki", "Czerwone: dywidenda wyższa niż wolna gotówka – może być finansowana długiem. Zielone: wypłaty co najmniej 3 lata z rzędu i pokryte gotówką."],
+  cz: ["Cena na tle własnej historii (C/Z)", "Zielone: akcje kosztują tyle co zwykle albo taniej niż średnio w 5 lat. Czerwone: o ponad 50% drożej niż zwykle."],
+  ev: ["Cena na tle branży (EV/EBITDA)", "Zielone: nie drożej niż typowa spółka z tego sektora. Czerwone: o ponad 50% drożej."],
+  fcfy: ["Ile wolnej gotówki dostajesz za cenę akcji", "Wolna gotówka z roku w relacji do wartości spółki na giełdzie. Zielone: ponad 5% rocznie. Czerwone: spółka wydaje więcej gotówki, niż zarabia."],
+};
+function flagWhy(f) {
+  const s = f.score == null ? "" : `${f.score > 0 ? "+" : ""}${f.score} pkt`;
+  if (!f.auto) return `Za mało danych finansowych do oceny (policzone kryteria: ${f.n}) – spółka jest traktowana jako neutral.`;
+  if (f.auto === "red" && f.ko.length) return "Red flag, bo wystąpił sygnał weto. Jeden taki sygnał wystarcza, niezależnie od reszty wyników:";
+  if (f.auto === "red" && f.red_cats.length) return `Red flag, bo w jednej grupie skupiają się co najmniej 3 problemy (${f.red_cats.map((k) => f.cats[k]).join(", ")}). Skupione problemy są groźniejsze niż rozrzucone.`;
+  if (f.auto === "red") return `Red flag, bo minusów jest więcej niż plusów: wynik ${s}.`;
+  if (f.auto === "green") return `Green flag: wynik ${s} (próg to +${f.green_min}) i brak sygnałów weto – spółka warta dalszej analizy.`;
+  return `Neutral: wynik ${s}. Nie ma poważnych problemów, ale do green flag brakuje ${f.green_min - f.score} pkt (próg +${f.green_min}).`;
+}
+function flagDialog(t) {
+  const f = drawerData?.flag; if (!f) return;
+  const icon = { 1: `<span class="fl-i up">✓</span>`, 0: `<span class="fl-i dim">–</span>`, "-1": `<span class="fl-i down">✗</span>` };
+  const groups = Object.entries(f.cats).map(([k, label]) => {
+    const cs = f.criteria.filter((c) => c.cat === k);
+    return cs.length ? `<h3>${esc(label)}</h3><ul class="fl-list">${cs.map((c) => {
+      const h = FLAG_HELP[c.key] || [c.name, ""];
+      return `<li>${icon[c.state]}<div><b>${esc(h[0])}</b>${c.weight > 1 ? ` <span class="dim small">(liczy się podwójnie)</span>` : ""}
+        <span class="dim"> – ${esc(c.text)}</span><div class="dim small">${esc(h[1])}</div></div></li>`;
+    }).join("")}</ul>` : "";
+  }).join("");
+  const dlg = $("#flagDlg");
+  dlg.innerHTML = `<h2>${esc(t)} ${flagPill(f.flag, !!f.manual)}</h2>
+    ${f.manual ? `<p>Flagę ustawiłeś ręcznie${f.updated ? ` (${esc(dd(f.updated.slice(0, 10)))})` : ""}${f.note ? `: <i>${esc(f.note)}</i>` : ""}. Ocena automatyczna: <b>${esc(FLAG[f.auto] || "brak oceny")}</b>.</p>` : ""}
+    <p>${esc(flagWhy(f))}</p>
+    ${f.ko.length ? `<ul class="fl-list">${f.ko.map((k) => `<li><span class="fl-i down">⛔</span><div>${esc(k)}</div></li>`).join("")}</ul>` : ""}
+    ${f.criteria.length ? `<p class="dim small">Każde kryterium: <span class="up">✓</span> +1 pkt, <span class="dim">–</span> 0, <span class="down">✗</span> −1 pkt. Green flag od +${f.green_min} pkt, red flag poniżej 0.</p>${groups}` : ""}
+    <p class="dim small">Nie sprawdzamy automatycznie (brak danych): opinii biegłego rewidenta, zmian audytora, należności i zapasów, kosztów odsetek, transakcji z podmiotami powiązanymi ani tego, czy zarząd dowozi prognozy. Jeśli wiesz o czymś takim – ustaw flagę ręcznie.</p>
+    <h3>Zmień flagę ręcznie</h3>
+    <div class="seg fl-set" role="group">${["green", "neutral", "red"].map((k) => `<button data-flset="${k}" aria-pressed="${f.manual === k}">${FLAG[k]}</button>`).join("")}
+      <button data-flset="auto" aria-pressed="${!f.manual}">Automatycznie</button></div>
+    <label class="fld"><span>Powód (opcjonalnie)</span><input id="flNote" maxlength="120" value="${esc(f.note || "")}" placeholder="np. zastrzeżenia biegłego w raporcie rocznym"></label>
+    <div class="dlg-actions"><button class="btn" data-flclose>Zamknij</button></div>`;
+  dlg.dataset.t = t;
+  if (!dlg.open) dlg.showModal();
+}
+async function setFlag(t, flag) {
+  const note = $("#flNote")?.value || "";
+  const r = await fetch(`/api/flags/${encodeURIComponent(t)}`, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ flag, note }) });
+  const j = await r.json();
+  if (!r.ok || j.ok === false) { toast(j.msg || "Nie udało się zapisać flagi"); return; }
+  if (drawerTicker === t && drawerData) {
+    drawerData.flag = j.flag;
+    const b = $("#drawerBody [data-flagopen]"); if (b) b.outerHTML = flagBtn(j.flag);
+  }
+  const row = tblCompanies?.getRow(t);
+  if (row) row.update({ flag: j.flag.flag, flag_manual: !!j.flag.manual });
+  if (companiesCache?.rows[t]) Object.assign(companiesCache.rows[t], { flag: j.flag.flag, flag_manual: !!j.flag.manual });
+  flagDialog(t);
+  toast(flag === "auto" ? "Przywrócono flagę automatyczną" : `Ustawiono: ${FLAG[flag]}`);
+}
+const flagBtn = (f) => `<button class="flag flag-${f.flag} flag-btn" data-flagopen title="Kliknij, żeby zobaczyć, dlaczego taka flaga">${FLAG[f.flag]}${f.manual ? " ✎" : ""} ›</button>`;
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-flagopen]")) { flagDialog(drawerTicker); return; }
+  const s = e.target.closest("#flagDlg [data-flset]");
+  if (s) { setFlag($("#flagDlg").dataset.t, s.dataset.flset); return; }
+  if (e.target.closest("#flagDlg [data-flclose]")) $("#flagDlg").close();
+});
+
 const BUILTIN = [
   { field: "ticker", title: "Ticker", group: "base", frozen: true, formatter: tickerFmt, headerFilter: "input", width: 86 },
   { field: "name", title: "Spółka", group: "base", headerFilter: "input", width: 190 },
+  { field: "flag", title: "Flaga", group: "base", width: 104, formatter: flagColFmt, sorter: (a, b) => FLAG_RANK[a] - FLAG_RANK[b],
+    headerTooltip: "Green flag / Neutral / Red flag – sito, które spółki brać do dalszej analizy (wyniki, zadłużenie, emisje, zarząd, wycena). Spółki z red flag nie pokazują się w Sesji i Trendach. ✎ = flaga ustawiona ręcznie. Szczegóły: kliknij flagę w panelu spółki.",
+    headerFilter: "list", headerFilterParams: { values: { nored: "bez red flag", green: "Green flag", neutral: "Neutral", red: "Red flag" }, clearable: true },
+    headerFilterFunc: (h, v) => h === "nored" ? v !== "red" : v === h },
   { field: "warnings", title: "Ostrzeżenia", group: "base", width: 120, formatter: warnFmt, sorter: (a, b) => warnRank(a) - warnRank(b),
     headerTooltip: "Nie dotykaj bez sprawdzenia: emisja akcji (60 dni), sprzedaż dużych akcjonariuszy lub insiderów po dużym wzroście, brak lub opóźnienie raportu okresowego, a na NewConnect skrajne wskaźniki (C/WK > 20, ujemna EBITDA, kapitalizacja < 20 mln zł). Szczegóły w dymku.",
     headerFilter: "list", headerFilterParams: { values: { warn: "ważne ostrzeżenia", any: "dowolne", none: "bez ostrzeżeń" }, clearable: true },
@@ -912,7 +995,7 @@ async function openCompany(t) {
   const c = d.company;
   drawerData = d;
   $("#drawerBody").innerHTML = `
-    <h2>${esc(c.ticker)} · ${esc(c.full_name || c.short_name)}</h2>
+    <h2>${esc(c.ticker)} · ${esc(c.full_name || c.short_name)} ${d.flag ? flagBtn(d.flag) : ""}</h2>
     <div class="dim">${esc(c.market === "NC" ? "NewConnect" : "GPW")}${c.sector ? " · " + esc(c.sector) : ""}${c.isin ? " · " + esc(c.isin) : ""}
       ${c.slug ? `· <a href="https://www.biznesradar.pl/notowania/${encodeURIComponent(c.slug)}" target="_blank" rel="noopener">profil w Biznesradar</a>` : "· wycofana z obrotu (brak w Biznesradar)"}</div>
     <div class="facts">
@@ -1706,7 +1789,9 @@ async function loadTrends() {
   $("#trMin").value = String(trPref.min); $("#trMinNc").value = String(trPref.min_nc);
   $("#trTrend").checked = trPref.trend; $("#trDays").value = String(trPref.days);
   loadMarket().then((m) => renderMarketStrip($("#trMarket"), m)).catch(() => {});
-  const d = await api(`/api/trends?${new URLSearchParams({ min: trPref.min, min_nc: trPref.min_nc, trend: trPref.trend ? 1 : 0, days: trPref.days })}`);
+  const d = await api(`/api/trends?${new URLSearchParams({ min: trPref.min, min_nc: trPref.min_nc, trend: trPref.trend ? 1 : 0, days: trPref.days, show_red: trPref.show_red ? 1 : 0 })}`);
+  $("#trShowRed").checked = !!trPref.show_red;
+  $("#trRedN").textContent = d.hide_red ? `(ukryto ${d.hidden_red})` : "";
   $("#trAsOf").textContent = d.date ? `sesja ${dd(d.date)} · historia ${d.sessions} sesji` : "";
   const W = d.wig;
   const mom = d.momentum.length ? `<table class="stable"><thead><tr><th>#</th><th>Spółka</th><th>Sektor</th><th class="n">Momentum</th><th class="n">3 mies.</th><th class="n">6 mies.</th>
@@ -1752,6 +1837,7 @@ const saveTrPref = () => { try { localStorage.setItem("gpwt_trends", JSON.string
 $("#trMin").addEventListener("change", (e) => { trPref.min = +e.target.value; saveTrPref(); });
 $("#trMinNc").addEventListener("change", (e) => { trPref.min_nc = +e.target.value; saveTrPref(); });
 $("#trTrend").addEventListener("change", (e) => { trPref.trend = e.target.checked; saveTrPref(); });
+$("#trShowRed").addEventListener("change", (e) => { trPref.show_red = e.target.checked; saveTrPref(); });
 $("#trDays").addEventListener("change", (e) => { trPref.days = +e.target.value; saveTrPref(); });
 
 async function loadSession() {
@@ -1766,7 +1852,7 @@ async function loadSession() {
 }
 async function refreshSession() {
   const q = new URLSearchParams({ min: sesPref.min, min_nc: sesPref.min_nc, market: sesPref.market,
-    watch: sesPref.watch || "", sessions: sesPref.sessions });
+    watch: sesPref.watch || "", sessions: sesPref.sessions, show_red: sesPref.show_red ? 1 : 0 });
   const d = await api(`/api/session?${q}`);
   $("#sesWatch").innerHTML = `<option value="">${d.has_portfolio ? "Wszystkie portfele" : "– wybierz –"}</option>`
     + (d.portfolios.length > 1 ? d.portfolios.map((p) => `<option value="__portfolio:${p.id}">Portfel: ${esc(p.name)}</option>`).join("") : "")
@@ -1774,7 +1860,9 @@ async function refreshSession() {
     `<option value="${esc(c.key)}">${esc(c.label)}</option>`).join("");
   $("#sesWatch").value = sesPref.watch || "";
   try { await loadMarket(); } catch { /* kontekst rynku niedostępny */ }
-  try { calData = await api("/api/calendar?days=14"); } catch { calData = null; }
+  try { calData = await api(`/api/calendar?days=14&hide_red=${sesPref.show_red ? 0 : 1}`); } catch { calData = null; }
+  $("#sesShowRed").checked = !!sesPref.show_red;
+  $("#sesRedN").textContent = d.hide_red ? `(ukryto ${d.hidden_red} płynnych)` : "";
   renderSession(d);
 }
 const saveSesPref = () => { api("/api/settings/session", { method: "PUT", body: sesPref }).catch(() => {}); refreshSession(); };
@@ -1787,6 +1875,7 @@ $("#sesBody").addEventListener("click", (e) => {
   sesPref.sessions = +b.dataset.ses; saveSesPref();
 });
 $("#sesWatch").addEventListener("change", (e) => { sesPref.watch = e.target.value; saveSesPref(); });
+$("#sesShowRed").addEventListener("change", (e) => { sesPref.show_red = e.target.checked; saveSesPref(); });
 $$("#sesMkt button").forEach((b) => b.addEventListener("click", () => {
   sesPref.market = b.dataset.smkt;
   $$("#sesMkt button").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));

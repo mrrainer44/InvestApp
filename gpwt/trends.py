@@ -20,8 +20,8 @@ def _is_fund(norm, name):
     return any(t in (norm or "").split() for t in FUND_RE) or any(w in s for w in _FUND_WORDS)
 
 
-def momentum(tech, min_turn=100_000, min_nc=30_000, trend_only=True, n=25):
-    rows = [x for x in tech["rows"].values() if x["mom"] is not None and (x["avg20"] or 0) >= (
+def momentum(tech, min_turn=100_000, min_nc=30_000, trend_only=True, n=25, hide=()):
+    rows = [x for x in tech["rows"].values() if x["ticker"] not in hide and x["mom"] is not None and (x["avg20"] or 0) >= (
         min_nc if x["market"] == "NC" else min_turn)]
     if trend_only:
         rows = [x for x in rows if x["trend"] and x["vs200"] is not None and x["vs200"] > 0]
@@ -31,7 +31,7 @@ def momentum(tech, min_turn=100_000, min_nc=30_000, trend_only=True, n=25):
     return [{k: x.get(k) for k in keep} for x in rows[:n]], len(rows)
 
 
-def sectors(tech, min_turn=20_000):
+def sectors(tech, min_turn=20_000, hide=()):
     groups = {}
     for x in tech["rows"].values():
         if not x["sector"] or (x["avg20"] or 0) < min_turn:
@@ -51,18 +51,18 @@ def sectors(tech, min_turn=20_000):
         a = [x for x in xs if x["vs200"] is not None]
         row["above200"] = sum(x["vs200"] > 0 for x in a) / len(a) * 100 if a else None
         best = sorted((x for x in xs if x["ret_1m"] is not None), key=lambda x: -x["ret_1m"])
-        row["leaders"] = [x["ticker"] for x in best[:3]]
+        row["leaders"] = [x["ticker"] for x in best if x["ticker"] not in hide][:3]
         out.append(row)
     out.sort(key=lambda r: -(r["rs_1m"] if r["rs_1m"] is not None else -999))
     return out
 
 
-def funds(con, tech, days=365, n=25):
+def funds(con, tech, days=365, n=25, hide=()):
     start = (date.today() - timedelta(days=days)).isoformat()
     by = {}
     for r in con.execute("SELECT ticker, investor, investor_norm, delta, value, date, source FROM changes "
                          "WHERE excluded=0 AND date>=? AND source IN ('fundusze','art69','akcjonariat')", (start,)):
-        if not _is_fund(r["investor_norm"], r["investor"]):
+        if r["ticker"] in hide or not _is_fund(r["investor_norm"], r["investor"]):
             continue
         g = by.setdefault(r["ticker"], {"ticker": r["ticker"], "up": set(), "down": set(), "value": 0.0, "last": r["date"],
                                         "unpriced": 0})
@@ -82,14 +82,14 @@ def funds(con, tech, days=365, n=25):
     return buy[:n], sell[:n]
 
 
-def quality_rank(con, tech, min_turn=100_000, min_nc=30_000, n=30):
+def quality_rank(con, tech, min_turn=100_000, min_nc=30_000, n=30, hide=()):
     """Długi termin: najwyższa ocena jakości wśród płynnych spółek (średni obrót z 20 sesji od progu)."""
     from . import quality
     q = quality.compute(con)
     rows = []
     for t, x in q.items():
         tx = tech["rows"].get(t) or {}
-        if x.get("quality") is None or (tx.get("avg20") or 0) < (min_nc if tx.get("market") == "NC" else min_turn):
+        if t in hide or x.get("quality") is None or (tx.get("avg20") or 0) < (min_nc if tx.get("market") == "NC" else min_turn):
             continue
         rows.append({"ticker": t, "name": tx.get("name"), "sector": tx.get("sector"), "market": tx.get("market"),
                      **{k: x.get(k) for k in ("quality", "fscore", "roe", "roe_min5", "net_margin", "nd_ebitda", "net_cash",
@@ -101,11 +101,13 @@ def quality_rank(con, tech, min_turn=100_000, min_nc=30_000, n=30):
     return rows[:n], len(rows)
 
 
-def summary(con, min_turn=100_000, min_nc=30_000, trend_only=True, fund_days=365):
+def summary(con, min_turn=100_000, min_nc=30_000, trend_only=True, fund_days=365, hide=None):
+    """hide - spółki z red flag pomijane we wszystkich zestawieniach (średnie sektorów liczymy z całości)."""
+    hide = hide or set()
     tech = technicals.compute(con)
-    qual, n_qual = quality_rank(con, tech, min_turn, min_nc)
-    mom, n_mom = momentum(tech, min_turn, min_nc, trend_only)
-    buy, sell = funds(con, tech, fund_days)
+    qual, n_qual = quality_rank(con, tech, min_turn, min_nc, hide=hide)
+    mom, n_mom = momentum(tech, min_turn, min_nc, trend_only, hide=hide)
+    buy, sell = funds(con, tech, fund_days, hide=hide)
     return {"date": tech["day"], "sessions": tech.get("sessions"), "wig": tech["wig"], "momentum": mom, "n_momentum": n_mom,
-            "trend_only": trend_only, "min_turnover": min_turn, "min_nc": min_nc, "sectors": sectors(tech),
+            "trend_only": trend_only, "min_turnover": min_turn, "min_nc": min_nc, "sectors": sectors(tech, hide=hide), "hidden_red": len(hide), "hide_red": bool(hide),
             "funds_buy": buy, "funds_sell": sell, "fund_days": fund_days, "quality": qual, "n_quality": n_qual}

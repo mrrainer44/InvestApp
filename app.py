@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
-from gpwt import (alerts, analyses, collect, config, db, flows, kalendarz, market, portfolio, pressure, quality, session,
+from gpwt import (alerts, analyses, collect, config, db, flags, flows, kalendarz, market, portfolio, pressure, quality, session,
                   technicals, trends)
 from gpwt import ostrzezenia as gwarn
 from gpwt.config import ROOT, SERVER_HOST, SERVER_PORT
@@ -144,6 +144,7 @@ def companies():
     tech = technicals.compute(c)["rows"]
     warn = gwarn.compute(c)
     qual = quality.compute(c)
+    fl_auto, fl_man = flags.compute(c), flags.manual(c)
     palerts = {}
     for a in alerts.listing(c):
         if a["active"] or (a["triggered_at"] or "") >= (today - timedelta(days=3)).isoformat():
@@ -208,6 +209,8 @@ def companies():
                 ("new_high52", "new_high52"), ("new_low52", "new_low52"))},
             "warnings": warn.get(t) or None,
             "price_alerts": palerts.get(t),
+            "flag": (fl_man.get(t) or {}).get("flag") or (fl_auto.get(t) or {}).get("auto") or "neutral",
+            "flag_manual": bool(fl_man.get(t)), "flag_score": (fl_auto.get(t) or {}).get("score"),
             **{k: (qual.get(t) or {}).get(src) for k, src in (
                 ("quality", "quality"), ("rev_ttm_yoy", "rev_ttm_yoy"), ("np_ttm_yoy", "np_ttm_yoy"), ("rev_yoy", "rev_yoy"),
                 ("np_yoy", "np_yoy"), ("roe", "roe"), ("roic", "roic"), ("net_margin", "net_margin"),
@@ -248,6 +251,7 @@ def company(ticker):
     }
     res["quality"] = quality.compute(c).get(ticker)
     res["price_alerts"] = alerts.listing(c, ticker)
+    res["flag"] = flags.detail(c, ticker)
     res["quarters"] = quality.quarters(c, ticker)
     af_col = c.execute("SELECT key, label, options FROM custom_columns WHERE key='ocena_af'").fetchone()
     res["af_column"] = ({"key": af_col["key"], "label": af_col["label"], "options": json.loads(af_col["options"] or "[]")}
@@ -515,6 +519,9 @@ def get_calendar():
         days = 14
     c = con()
     r = kalendarz.events(c, days)
+    if request.args.get("hide_red") == "1":
+        hide = flags.hidden(c)
+        r["events"] = [e for e in r["events"] if e.get("ticker") not in hide]
     c.close()
     return jsonify(r)
 
@@ -532,7 +539,8 @@ def get_trends():
             return d
     c = con()
     r = trends.summary(c, min_turn=num("min", 100_000), min_nc=num("min_nc", 30_000),
-                       trend_only=a.get("trend", "1") != "0", fund_days=int(num("days", 365)))
+                       trend_only=a.get("trend", "1") != "0", fund_days=int(num("days", 365)),
+                       hide=None if a.get("show_red") == "1" else flags.hidden(c))
     c.close()
     return jsonify(r)
 
@@ -561,6 +569,13 @@ def _portfolio_write(fn):
         return jsonify({"ok": False, "msg": str(e)}), 400
     finally:
         c.close()
+
+
+@app.put("/api/flags/<ticker>")
+def put_flag(ticker):
+    d = request.get_json(silent=True) or {}
+    return _portfolio_write(lambda c: (flags.set_flag(c, ticker, d.get("flag"), d.get("note")),
+                                       {"flag": flags.detail(c, ticker.upper())})[1])
 
 
 @app.post("/api/portfolios")
@@ -642,7 +657,8 @@ def session_summary():
             return default
     r = session.summary(c, min_turnover=min_t, market=a.get("market", pref.get("market", "")),
                         watch_key=a.get("watch", pref.get("watch")) or None, min_nc=num_arg("min_nc", 30_000),
-                        insider_sessions=int(num_arg("sessions", 1)) if num_arg("sessions", 1) in (1, 5, 20) else 1)
+                        insider_sessions=int(num_arg("sessions", 1)) if num_arg("sessions", 1) in (1, 5, 20) else 1,
+                        hide=None if str(a.get("show_red", pref.get("show_red", ""))) in ("1", "True", "true") else flags.hidden(c))
     c.close()
     return jsonify(r)
 

@@ -679,6 +679,37 @@ def test_pipeline():
     for i in (a_buy, a_sell):
         assert cl.delete(f"/api/alerts/{i}").get_json()["ok"]
     assert cl.get("/api/alerts").get_json()["alerts"] == []
+    # flagi: ocena automatyczna, ręczna red flag ukrywa spółkę w Sesji i Trendach (poza spółkami z portfela)
+    from gpwt import flags
+    assert flags._KO_NAME.search("PKP CARGO SA W RESTRUKTURYZACJI") and not flags._KO_NAME.search("RESTRUKTURYZACJA SA")
+    auto = flags.compute(db.connect())
+    assert auto and all(x["auto"] in (None, "green", "neutral", "red") for x in auto.values())
+    co_all = cl.get("/api/companies").get_json()
+    assert all(x["flag"] in ("green", "neutral", "red") for x in co_all)
+    held_t = {p["ticker"] for p in cl.get("/api/portfolio").get_json()["positions"]}
+    ses_all = cl.get("/api/session?min=0&min_nc=0&show_red=1").get_json()
+    listed = lambda s: {x["ticker"] for k in ("gainers", "losers", "spikes") for x in s[k]}  # noqa: E731
+    cand = sorted(listed(ses_all) - held_t)
+    assert cand, ses_all["gainers"]
+    tred = cand[0]
+    assert cl.put("/api/flags/XXXX", json={"flag": "red"}).status_code == 400
+    assert cl.put(f"/api/flags/{tred}", json={"flag": "purple"}).status_code == 400
+    fd = cl.put(f"/api/flags/{tred.lower()}", json={"flag": "red", "note": "test"}).get_json()["flag"]
+    assert fd["flag"] == "red" and fd["manual"] == "red" and fd["note"] == "test"
+    assert cl.get(f"/api/company/{tred}").get_json()["flag"]["manual"] == "red"
+    assert next(x for x in cl.get("/api/companies").get_json() if x["ticker"] == tred)["flag_manual"]
+    ses_h = cl.get("/api/session?min=0&min_nc=0&show_red=0").get_json()
+    assert tred not in listed(ses_h) and ses_h["hide_red"] and ses_h["hidden_red"] >= 1
+    assert tred in listed(cl.get("/api/session?min=0&min_nc=0&show_red=1").get_json())
+    tr_h = cl.get("/api/trends?min=0&min_nc=0&trend=0").get_json()
+    assert tr_h["hide_red"] and tred not in {x["ticker"] for x in tr_h["momentum"] + tr_h["quality"]}
+    if held_t:  # spółki z portfela nie znikają, nawet z red flag
+        th = sorted(held_t)[0]
+        cl.put(f"/api/flags/{th}", json={"flag": "red"})
+        assert th not in flags.hidden(db.connect())
+        cl.put(f"/api/flags/{th}", json={"flag": "auto"})
+    assert cl.put(f"/api/flags/{tred}", json={"flag": "auto"}).get_json()["flag"]["manual"] is None
+    assert not db.connect().execute("SELECT COUNT(*) FROM company_flags").fetchone()[0]
     # szybkie pobieranie w trakcie sesji
     st_q, stats_q = collect.run(quick=True)
     assert st_q == "ok" and stats_q["quotes_GPW"] == 5 and "ratio_cz_GPW" not in stats_q, stats_q

@@ -56,7 +56,8 @@ def _breadth(rows):
             "median_change": statistics.median(chg) if chg else None}
 
 
-def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc=30_000, insider_sessions=1):
+def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc=30_000, insider_sessions=1, hide=None):
+    """hide - spółki pomijane w listach (red flag); szerokość rynku i obroty liczymy zawsze dla całego rynku."""
     day, prev = _dates(con)
     if not day:
         return {"date": None}
@@ -108,6 +109,8 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc
         "SELECT id, ticker, ts, title, category FROM espi WHERE ts>? ORDER BY ts DESC", (since,))]
     if market:
         espi_rows = [e for e in espi_rows if e["ticker"] in by]
+    hide = hide or set()
+    espi_rows = [e for e in espi_rows if e["ticker"] not in hide]
     counts = {}
     for e in espi_rows:
         counts[e["category"]] = counts.get(e["category"], 0) + 1
@@ -119,6 +122,7 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc
         "AND c.excluded=0 AND e.ts>? ORDER BY ABS(COALESCE(c.value, 0)) DESC", (since_h,))]
     if market:
         holders = [h for h in holders if h["ticker"] in by]
+    holders = [h for h in holders if h["ticker"] not in hide]
     for h in holders:
         q = by.get(h["ticker"])
         h["chg"] = q["chg_eff"] if q else None
@@ -209,11 +213,12 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc
                                       "ratio", "cmf21", "exdiv", "mcap", "breakout", "gap", "rs_day", "trend",
                                       "vs200")} | {"signals": signals(x)}
 
-    movers = sorted((x for x in liquid if x["chg_eff"] is not None), key=lambda x: x["chg_eff"])
-    spikes = sorted((x for x in liquid if x["ratio"] and x["ratio"] >= 2), key=lambda x: -x["ratio"])
-    breakouts = sorted((x for x in liquid if x["breakout"] and (x["ratio"] or 0) >= 2), key=lambda x: -(x["ratio"] or 0))
-    gaps = sorted((x for x in liquid if x["gap"]), key=lambda x: -abs(x["gap"]["size"]))
-    rs = sorted((x for x in liquid if x["rs_day"] is not None), key=lambda x: -x["rs_day"])
+    shown = [x for x in liquid if x["ticker"] not in hide]
+    movers = sorted((x for x in shown if x["chg_eff"] is not None), key=lambda x: x["chg_eff"])
+    spikes = sorted((x for x in shown if x["ratio"] and x["ratio"] >= 2), key=lambda x: -x["ratio"])
+    breakouts = sorted((x for x in shown if x["breakout"] and (x["ratio"] or 0) >= 2), key=lambda x: -(x["ratio"] or 0))
+    gaps = sorted((x for x in shown if x["gap"]), key=lambda x: -abs(x["gap"]["size"]))
+    rs = sorted((x for x in shown if x["rs_day"] is not None), key=lambda x: -x["rs_day"])
 
     watch = None
     held = [r[0] for r in con.execute("SELECT DISTINCT ticker FROM positions WHERE closed IS NULL")]
@@ -228,7 +233,7 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc
         col = con.execute("SELECT key, label, type FROM custom_columns WHERE key=?", (watch_key,)).fetchone()
         if col:
             tick = [r[0] for r in con.execute("SELECT ticker FROM custom_values WHERE key=? AND value NOT IN "
-                                              "('', 'false', '0', 'null')", (watch_key,))]
+                                              "('', 'false', '0', 'null')", (watch_key,)) if r[0] not in hide]
             watch = {"key": col["key"], "label": col["label"],
                      "rows": sorted((pub(by[t]) for t in tick if t in by), key=lambda x: -len(x["signals"]))}
 
@@ -241,17 +246,17 @@ def summary(con, min_turnover=100_000, market="", watch_key=None, top=12, min_nc
         "gainers": [pub(x) for x in reversed(movers[-top:]) if (x["chg_eff"] or 0) > 0],
         "losers": [pub(x) for x in movers[:top] if (x["chg_eff"] or 0) < 0],
         "spikes": [pub(x) for x in spikes[:top]],
-        "exdiv": [pub(x) for x in rows if "exdiv" in x],
+        "exdiv": [pub(x) for x in rows if "exdiv" in x and x["ticker"] not in hide],
         "holders": holders[:60],
         "espi": {"counts": counts, "total": len(espi_rows),
                  "important": [e for e in espi_rows if e["category"] in ("wezwanie", "skup", "wz_lista")][:30],
                  "tagged": [{**e, "chg": by[e["ticker"]]["chg_eff"] if e["ticker"] in by else None}
                             for e in espi_rows if e["tags"]][:60]},
         "breakouts": [pub(x) for x in breakouts[:top]], "gaps": [pub(x) for x in gaps[:top]],
-        "warned": [pub(x) for x in sorted((x for x in liquid if any(w["kind"] != "skrajne" for w in warn.get(x["ticker"], []))),
+        "warned": [pub(x) for x in sorted((x for x in shown if any(w["kind"] != "skrajne" for w in warn.get(x["ticker"], []))),
                                           key=lambda x: -(x["turnover"] or 0))][:20],
         "rs_top": [pub(x) for x in rs[:8]], "rs_bottom": [pub(x) for x in rs[-8:][::-1]], "wig_chg": wig_chg,
-        "watch": watch,
+        "watch": watch, "hidden_red": len(liquid) - len(shown), "hide_red": bool(hide),
         "watch_columns": [dict(r) for r in con.execute("SELECT key, label, type FROM custom_columns ORDER BY label")],
     }
 
