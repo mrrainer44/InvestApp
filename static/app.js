@@ -131,7 +131,7 @@ function flagWhy(f) {
 function flagDialog(t) {
   const f = drawerData?.flag; if (!f) return;
   const icon = { 1: `<span class="fl-i up">✓</span>`, 0: `<span class="fl-i dim">–</span>`, "-1": `<span class="fl-i down">✗</span>` };
-  const groups = Object.entries(f.cats).map(([k, label]) => {
+  const groups = ["wyniki", "bilans", "akcjonariat", "wycena"].map((k) => [k, f.cats[k]]).map(([k, label]) => {
     const cs = f.criteria.filter((c) => c.cat === k);
     return cs.length ? `<h3>${esc(label)}</h3><ul class="fl-list">${cs.map((c) => {
       const h = FLAG_HELP[c.key] || [c.name, ""];
