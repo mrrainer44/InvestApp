@@ -1041,6 +1041,17 @@ async function openCompany(t) {
 }
 
 /* ---------- inwestorzy ---------- */
+// "pokaż red flag" w Inwestorach, Zmianach i Komunikatach ESPI - osobno dla każdej zakładki, zapamiętane w przeglądarce
+const showRed = (() => { try { return JSON.parse(localStorage.getItem("gpwt_show_red") || "{}"); } catch { return {}; } })();
+function redToggle(id, tab, reload) {
+  const el = $(id); el.checked = !!showRed[tab];
+  el.addEventListener("change", () => {
+    showRed[tab] = el.checked;
+    try { localStorage.setItem("gpwt_show_red", JSON.stringify(showRed)); } catch { /* brak pamięci */ }
+    reload();
+  });
+}
+const redQ = (tab) => showRed[tab] ? "1" : "0";
 const SOURCES = { art69: "Zawiadomienia art. 69", mar: "Insiderzy (MAR)", fundusze: "Portfele OFE/TFI", akcjonariat: "Główni akcjonariusze", wz: "Walne zgromadzenia" };
 const DEFAULT_SOURCES = ["art69", "mar", "fundusze", "akcjonariat"];
 let period = "week", tblInv;
@@ -1050,7 +1061,7 @@ $("#invFrom").value = `${new Date().getFullYear() - 1}-01-01`;
 
 async function loadInvestors() {
   const src = $$("#srcChips input:checked").map((i) => i.value).join(",");
-  const qs = new URLSearchParams({ period, sources: src, from: $("#invFrom").value, to: $("#invTo").value });
+  const qs = new URLSearchParams({ period, sources: src, from: $("#invFrom").value, to: $("#invTo").value, show_red: redQ("investors") });
   const data = await api(`/api/flows?${qs}`);
   const scale = data.map((d) => Math.abs(d.net)).sort((a, b) => b - a)[Math.min(3, data.length - 1)] || 1;
   const cols = [
@@ -1080,11 +1091,12 @@ $$("[data-period]").forEach((b) => b.addEventListener("click", () => { period = 
   $$("[data-period]").forEach((x) => x.setAttribute("aria-pressed", x === b)); loadInvestors(); }));
 ["#invFrom", "#invTo"].forEach((s) => $(s).addEventListener("change", loadInvestors));
 $("#srcChips").addEventListener("change", loadInvestors);
+redToggle("#invShowRed", "investors", () => loadInvestors());
 
 /* ---------- zmiany (edytowalne) ---------- */
 let tblCh;
 async function loadChanges() {
-  const data = await api("/api/changes");
+  const data = await api(`/api/changes?show_red=${redQ("changes")}`);
   const intEd = { editor: "number", hozAlign: "right", formatter: (c) => fmtNum(c.getValue(), 0), sorter: numSort };
   if (tblCh) tblCh.destroy();
   tblCh = new Tabulator("#tblChanges", { data, index: "id", layout: "fitData", height: "calc(100vh - 190px)",
@@ -1127,6 +1139,7 @@ function filterChanges() {
 }
 $("#chQ").addEventListener("input", debounce(filterChanges, 150));
 ["#chSrc", "#chUnverified"].forEach((s) => $(s).addEventListener("change", filterChanges));
+redToggle("#chShowRed", "changes", () => loadChanges());
 $("#chClear").addEventListener("click", () => { $("#chQ").value = ""; $("#chSrc").value = ""; $("#chUnverified").checked = false; filterChanges(); tblCh?.clearHeaderFilter(); });
 
 /* ---------- ESPI ---------- */
@@ -1142,7 +1155,7 @@ const parsedSummary = (cat, p) => {
 };
 async function loadEspi() {
   const cats = $$("#espiChips input:checked").map((i) => i.value).join(",");
-  const data = await api(`/api/espi?days=${$("#espiDays").value}&categories=${cats}`);
+  const data = await api(`/api/espi?days=${$("#espiDays").value}&categories=${cats}&show_red=${redQ("espi")}`);
   if (tblEspi) tblEspi.destroy();
   tblEspi = new Tabulator("#tblEspi", { data, index: "id", layout: "fitData", height: "calc(100vh - 190px)",
     movableColumns: true,
@@ -1162,6 +1175,7 @@ async function loadEspi() {
 const filterEspi = () => { const q = $("#espiQ").value.trim().toLowerCase(); tblEspi?.setFilter((d) => !q || d.title.toLowerCase().includes(q) || (d.ticker || "").toLowerCase() === q); };
 $("#espiChips").addEventListener("change", loadEspi);
 $("#espiDays").addEventListener("change", loadEspi);
+redToggle("#espiShowRed", "espi", () => loadEspi());
 $("#espiQ").addEventListener("input", debounce(filterEspi, 150));
 
 /* ---------- ustawienia ---------- */

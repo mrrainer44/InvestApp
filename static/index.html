@@ -122,6 +122,7 @@
       <label>od <input type="date" id="invFrom"></label>
       <label>do <input type="date" id="invTo"></label>
       <div class="chips" id="srcChips"></div>
+      <label class="dim" title="Spółki z red flag są domyślnie pomijane (poza tymi, które masz w portfelu)."><input type="checkbox" id="invShowRed"> pokaż red flag</label>
       <span class="grow"></span>
       <input type="search" id="invQ" placeholder="Szukaj inwestora" aria-label="Szukaj inwestora">
     </div>
@@ -142,6 +143,7 @@
         <option value="wz">Listy z walnych zgromadzeń</option>
       </select>
       <label><input type="checkbox" id="chUnverified"> tylko niesprawdzone</label>
+      <label class="dim" title="Spółki z red flag są domyślnie pomijane (poza tymi, które masz w portfelu)."><input type="checkbox" id="chShowRed"> pokaż red flag</label>
       <span class="grow"></span>
       <button class="btn" id="chClear">Wyczyść filtr</button>
     </div>
@@ -157,6 +159,7 @@
         <option value="7">7 dni</option><option value="30" selected>30 dni</option><option value="90">90 dni</option><option value="365">rok</option>
       </select>
       <input type="search" id="espiQ" placeholder="Szukaj w tytułach" aria-label="Szukaj w tytułach">
+      <label class="dim" title="Spółki z red flag są domyślnie pomijane (poza tymi, które masz w portfelu)."><input type="checkbox" id="espiShowRed"> pokaż red flag</label>
     </div>
     <div class="grid-wrap"><div id="tblEspi"></div></div>
   </section>

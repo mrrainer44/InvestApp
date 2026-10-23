@@ -353,12 +353,17 @@ def put_setting(name):
 
 # ---------------- inwestorzy / zmiany ----------------
 
+def _hide_red(c):
+    """Spółki z red flag do pominięcia w listach - chyba że ?show_red=1."""
+    return set() if request.args.get("show_red") == "1" else flags.hidden(c)
+
+
 @app.get("/api/flows")
 def get_flows():
     c = con()
     src = [s for s in (request.args.get("sources") or "").split(",") if s] or None
     r = flows.investor_flows(c, request.args.get("period", "week"), src,
-                             request.args.get("from"), request.args.get("to"))
+                             request.args.get("from"), request.args.get("to"), _hide_red(c))
     c.close()
     return jsonify(r)
 
@@ -380,7 +385,8 @@ def get_changes():
         p.append(request.args["from"])
     q += " ORDER BY c.date DESC LIMIT 5000"
     al = flows.aliases(c)
-    r = db.rows(c, q, p)
+    hide = _hide_red(c)
+    r = [x for x in db.rows(c, q, p) if x["ticker"] not in hide]
     for x in r:
         x["investor_display"] = al.get(x["investor_norm"]) or x["investor"]
     c.close()
@@ -455,7 +461,8 @@ def get_espi():
         q += f" AND e.category IN ({','.join('?' * len(cats))})"
         p += cats
     q += " ORDER BY e.id DESC LIMIT 3000"
-    r = db.rows(c, q, p)
+    hide = _hide_red(c)
+    r = [x for x in db.rows(c, q, p) if x["ticker"] not in hide]  # komunikaty bez spółki zostają
     c.close()
     return jsonify(r)
 

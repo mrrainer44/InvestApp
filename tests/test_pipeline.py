@@ -703,6 +703,13 @@ def test_pipeline():
     assert tred in listed(cl.get("/api/session?min=0&min_nc=0&show_red=1").get_json())
     tr_h = cl.get("/api/trends?min=0&min_nc=0&trend=0").get_json()
     assert tr_h["hide_red"] and tred not in {x["ticker"] for x in tr_h["momentum"] + tr_h["quality"]}
+    for url, key in (("/api/changes", lambda r: {x["ticker"] for x in r}),
+                     ("/api/espi?days=3650", lambda r: {x["ticker"] for x in r}),
+                     ("/api/flows?from=2000-01-01", lambda r: {t for x in r for t in x["tickers"].split(", ")})):
+        sep = "&" if "?" in url else "?"
+        assert tred not in key(cl.get(url).get_json()), url
+        shown = cl.get(f"{url}{sep}show_red=1").get_json()
+        assert len(shown) >= len(cl.get(url).get_json()), url
     if held_t:  # spółki z portfela nie znikają, nawet z red flag
         th = sorted(held_t)[0]
         cl.put(f"/api/flags/{th}", json={"flag": "red"})

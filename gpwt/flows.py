@@ -332,8 +332,8 @@ def aliases(con):
     return {r["alias_norm"]: r["canonical"] for r in con.execute("SELECT * FROM investor_aliases")}
 
 
-def investor_flows(con, period="week", sources=None, start=None, end=None):
-    """Agregacja: inwestor x okres -> kupno, sprzedaż, saldo (PLN), liczba zmian, spółki."""
+def investor_flows(con, period="week", sources=None, start=None, end=None, hide=()):
+    """Agregacja: inwestor x okres -> kupno, sprzedaż, saldo (PLN), liczba zmian, spółki (bez spółek z hide)."""
     sources = sources or ["art69", "mar", "fundusze", "akcjonariat"]
     q = (f"SELECT * FROM changes WHERE excluded=0 AND source IN ({','.join('?' * len(sources))})")
     params = list(sources)
@@ -346,6 +346,8 @@ def investor_flows(con, period="week", sources=None, start=None, end=None):
     al = aliases(con)
     groups = {}
     for c in con.execute(q, params).fetchall():
+        if c["ticker"] in hide:
+            continue
         name = al.get(c["investor_norm"]) or c["investor"]
         per = iso_week(c["date"]) if period == "week" else c["date"][:7]
         g = groups.setdefault((name, per), {"investor": name, "period": per, "buy": 0.0, "sell": 0.0,
