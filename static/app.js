@@ -1773,7 +1773,7 @@ async function refreshSession() {
     + d.watch_columns.map((c) =>
     `<option value="${esc(c.key)}">${esc(c.label)}</option>`).join("");
   $("#sesWatch").value = sesPref.watch || "";
-  try { await loadMarket(); renderMarketStrip($("#sesMarket"), mktData); } catch { /* kontekst rynku niedostępny */ }
+  try { await loadMarket(); } catch { /* kontekst rynku niedostępny */ }
   try { calData = await api("/api/calendar?days=14"); } catch { calData = null; }
   renderSession(d);
 }
