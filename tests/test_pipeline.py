@@ -657,6 +657,28 @@ def test_pipeline():
     assert qm["quality"] == 100 and {p["name"] for p in qm["quality_parts"]} >= {"ROE stabilnie", "Zadłużenie", "Wolna gotówka"}
     assert "quality" in cl.get("/api/companies").get_json()[0] and "quality" in cl.get("/api/trends?min=0").get_json()
     assert "quarters" in cl.get("/api/company/PKO").get_json()
+    # alerty cenowe: próg kupna nad kursem zadziała od razu, próg sprzedaży dwa razy wyżej - nie
+    from gpwt import alerts
+    close_pko = next(x for x in cl.get("/api/companies").get_json() if x["ticker"] == "PKO")["price"]
+    assert cl.post("/api/alerts", json={"ticker": "PKO", "kind": "hold", "price": 1}).status_code == 400
+    assert cl.post("/api/alerts", json={"ticker": "PKO", "kind": "buy", "price": 0}).status_code == 400
+    a_buy = cl.post("/api/alerts", json={"ticker": "pko", "kind": "buy", "price": close_pko + 1, "note": "test"}).get_json()["id"]
+    a_sell = cl.post("/api/alerts", json={"ticker": "PKO", "kind": "sell", "price": close_pko * 2}).get_json()["id"]
+    hit = alerts.check(db.connect())
+    assert [h["id"] for h in hit] == [a_buy] and "spadł do" in alerts.message(hit[0])
+    lst = {x["id"]: x for x in cl.get("/api/alerts?ticker=PKO").get_json()["alerts"]}
+    assert not lst[a_buy]["active"] and lst[a_buy]["triggered_price"] is not None and lst[a_sell]["active"]
+    assert abs(lst[a_sell]["distance"] - 100) < 1e-6
+    assert any(x["kind"] == "price_alert" for x in cl.get("/api/portfolio").get_json()["alerts"])
+    assert next(x for x in cl.get("/api/companies").get_json() if x["ticker"] == "PKO")["price_alerts"]
+    assert alerts.check(db.connect()) == []  # jednorazowy - drugi raz nie działa
+    cl.patch(f"/api/alerts/{a_buy}", json={"rearm": True, "price": 0.5})  # poniżej minimum dnia (w danych testowych 1 zł)
+    lst = {x["id"]: x for x in cl.get("/api/alerts").get_json()["alerts"]}
+    assert lst[a_buy]["active"] and lst[a_buy]["triggered_at"] is None and lst[a_buy]["price"] == 0.5
+    assert alerts.check(db.connect()) == []
+    for i in (a_buy, a_sell):
+        assert cl.delete(f"/api/alerts/{i}").get_json()["ok"]
+    assert cl.get("/api/alerts").get_json()["alerts"] == []
     # szybkie pobieranie w trakcie sesji
     st_q, stats_q = collect.run(quick=True)
     assert st_q == "ok" and stats_q["quotes_GPW"] == 5 and "ratio_cz_GPW" not in stats_q, stats_q

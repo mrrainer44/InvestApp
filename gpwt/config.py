@@ -35,6 +35,11 @@ AUTH_USER = os.environ.get("GPWT_USER", "gpw")
 AUTH_PASSWORD = os.environ.get("GPWT_PASSWORD", "")
 # Świadomy wybór dla sieci domowej: bez hasła, ale tylko dla adresów prywatnych (LAN) i lokalnych.
 LAN_NO_PASSWORD = os.environ.get("GPWT_LAN_NO_PASSWORD") == "1"
+# Opcjonalnie: powiadomienia o alertach cenowych przez Home Assistant (usługa notify, np. aplikacja mobilna).
+# Token (długoterminowy token dostępu HA) trzymamy tylko w /etc/gpw-tracker.env - nigdy w repozytorium.
+HA_URL = os.environ.get("GPWT_HA_URL", "").rstrip("/")
+HA_TOKEN = os.environ.get("GPWT_HA_TOKEN", "")
+HA_NOTIFY = os.environ.get("GPWT_HA_NOTIFY", "")  # np. notify.mobile_app_telefon
 
 for d in (DATA_DIR, LOG_DIR, PDF_CACHE):
     d.mkdir(parents=True, exist_ok=True)

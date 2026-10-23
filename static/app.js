@@ -41,6 +41,14 @@ const warnFmt = (cell) => { const v = cell.getValue() || []; if (!v.length) retu
   const main = v.filter((w) => w.level === "warn"), tip = esc(v.map((w) => "• " + w.text).join("\n"));
   return main.length ? `<span class="sig warn" title="${tip}">⚠ ${esc(WARN_SHORT[main[0].kind] || main[0].kind)}${main.length > 1 ? " +" + (main.length - 1) : ""}</span>`
     : `<span class="sig" title="${tip}">${esc(WARN_SHORT[v[0].kind] || v[0].kind)}</span>`; };
+const alertRank = (v) => (v || []).some((a) => !a.active) ? -1000 : Math.min(999, ...(v || []).filter((a) => a.active && a.distance != null).map((a) => Math.abs(a.distance)), 999);
+const fmtAlertPrice = (v) => fmtNum(v, v < 10 ? 3 : 2);
+const alertColFmt = (cell) => { const v = cell.getValue() || []; if (!v.length) return "";
+  const hit = v.find((a) => !a.active);
+  if (hit) return `<span class="sig down" title="Alert ${hit.kind === "buy" ? "kupna" : "sprzedaży"} ${fmtAlertPrice(hit.price)} zł zadziałał ${esc((hit.triggered_at || "").replace("T", " ").slice(0, 16))} przy ${fmtAlertPrice(hit.triggered_price)} zł">⚡ ${hit.kind === "buy" ? "kupno" : "sprzedaż"} ${fmtAlertPrice(hit.price)}</span>`;
+  const act = v.filter((a) => a.active).sort((a, b) => Math.abs(a.distance ?? 999) - Math.abs(b.distance ?? 999));
+  const a = act[0]; if (!a) return "";
+  return `<span title="${esc(act.map((x) => `${x.kind === "buy" ? "Kupno przy" : "Sprzedaż przy"} ${fmtAlertPrice(x.price)} zł${x.note ? " – " + x.note : ""}`).join("\n"))}">${a.kind === "buy" ? "▼" : "▲"} ${fmtAlertPrice(a.price)} <span class="dim">(${a.distance > 0 ? "+" : ""}${fmtNum(a.distance, 1)}%)</span>${act.length > 1 ? ` +${act.length - 1}` : ""}</span>`; };
 const pfColFmt = (cell) => { const v = cell.getValue(), q = cell.getRow().getData().pf_qty;
   return v ? v.split(", ").map((n) => `<span class="pf-tag" title="${fmtNum(q, 0)} akcji w portfelach">${esc(n)}</span>`).join(" ") : ""; };
 const tickerFmt = (cell) => `<a class="tk" href="#" data-t="${esc(cell.getValue())}">${esc(cell.getValue())}</a>`;
@@ -97,6 +105,9 @@ const BUILTIN = [
     headerTooltip: "Nie dotykaj bez sprawdzenia: emisja akcji (60 dni), sprzedaż dużych akcjonariuszy lub insiderów po dużym wzroście, brak lub opóźnienie raportu okresowego, a na NewConnect skrajne wskaźniki (C/WK > 20, ujemna EBITDA, kapitalizacja < 20 mln zł). Szczegóły w dymku.",
     headerFilter: "list", headerFilterParams: { values: { warn: "ważne ostrzeżenia", any: "dowolne", none: "bez ostrzeżeń" }, clearable: true },
     headerFilterFunc: (h, v) => h === "none" ? !v : h === "any" ? !!v : (v || []).some((w) => w.level === "warn") },
+  { field: "price_alerts", title: "Alert ceny", group: "base", width: 128, formatter: alertColFmt, sorter: (a, b) => alertRank(a) - alertRank(b),
+    headerTooltip: "Twoje alerty cenowe: ▼ próg zakupu (alert, gdy kurs spadnie do ceny), ▲ próg sprzedaży (gdy wzrośnie). W nawiasie - o ile kurs musi się zmienić. ⚡ = alert zadziałał w ostatnich 3 dniach. Alerty ustawisz w panelu spółki albo w Moich spółkach.",
+    headerFilter: "tickCross", headerFilterParams: { tristate: true }, headerFilterFunc: (h, v) => h === null || h === !!(v && v.length) },
   { field: "pf", title: "W portfelu", group: "base", width: 130, formatter: pfColFmt, sorter: "string",
     headerTooltip: "Spółka ma otwartą pozycję w zakładce Moje spółki (nazwa portfela). Aktualizuje się po każdym zakupie i sprzedaży.",
     headerFilter: "tickCross", headerFilterParams: { tristate: true }, headerFilterFunc: (h, v) => h === null || h === !!v },
@@ -746,6 +757,78 @@ function sparkline(prices) {
     <div class="dim" style="display:flex;justify-content:space-between;font-size:12px"><span>${prices[0].date} · ${fmtNum(v[0])}</span><span>${prices.at(-1).date} · ${fmtNum(v.at(-1))}</span></div>`;
 }
 
+/* alerty cenowe w panelu spółki */
+function alertRows(list, withTicker = false) {
+  return list.map((a) => `<tr class="${a.active ? "" : "muted-row"}">
+      ${withTicker ? `<td>${tk(a.ticker)} <span class="dim nm">${esc(a.name || "")}</span>${a.held ? ` <span class="pf-tag">w portfelu</span>` : ""}</td>` : ""}
+      <td><span class="sig ${a.kind === "buy" ? "up" : "down"}">${a.kind === "buy" ? "kupno – kurs spadnie do" : "sprzedaż – kurs wzrośnie do"}</span></td>
+      <td class="n"><b>${fmtAlertPrice(a.price)} zł</b></td><td class="n">${a.close == null ? "–" : fmtAlertPrice(a.close)}</td>
+      <td class="n">${a.active && a.distance != null ? `${a.distance > 0 ? "+" : ""}${fmtNum(a.distance, 1)}%` : ""}</td>
+      <td>${a.active ? `<span class="dim">aktywny</span>` : `<span class="down">zadziałał ${esc((a.triggered_at || "").slice(8, 10) + "." + (a.triggered_at || "").slice(5, 7) + " " + (a.triggered_at || "").slice(11, 16))} przy ${fmtAlertPrice(a.triggered_price)} zł</span>`}</td>
+      <td class="dim">${esc(a.note || "")}</td>
+      <td class="act">${a.active ? "" : `<button class="btn sm" data-alrearm="${a.id}">Włącz ponownie</button>`}<button class="btn sm" data-aledit="${a.id}">Zmień</button><button class="btn sm danger" data-aldel="${a.id}">Usuń</button></td></tr>`).join("");
+}
+function alertBlock(d) {
+  const list = d.price_alerts || [], close = drawerData?.ohlc?.at?.(-1)?.close;
+  return `<h3>Alerty cenowe</h3>
+    ${list.length ? `<table class="stable"><tr><th>Rodzaj</th><th class="n">Próg</th><th class="n">Kurs</th><th class="n" title="O ile kurs musi się zmienić, żeby alert zadziałał">Do progu</th><th>Status</th><th>Notatka</th><th></th></tr>${alertRows(list)}</table>` : `<p class="dim">Brak alertów dla tej spółki.</p>`}
+    <form class="al-form" data-alform="${esc(d.company.ticker)}">
+      <select name="kind"><option value="buy">Kupno – gdy kurs spadnie do</option><option value="sell">Sprzedaż – gdy kurs wzrośnie do</option></select>
+      <input name="price" type="number" step="any" min="0" required placeholder="cena (zł)" value="${close ?? ""}">
+      <input name="note" maxlength="120" placeholder="notatka (opcjonalnie)">
+      <button class="btn primary sm">Dodaj alert</button></form>
+    <p class="dim chart-note">Sprawdzane przy każdym pobraniu notowań (dni sesyjne 10:00, 13:00, 17:10 i 18:30), także z minimum i maksimum dnia. Alert działa raz – potem możesz go włączyć ponownie.</p>`;
+}
+async function refreshDrawerAlerts(t) {
+  const r = await api(`/api/alerts?ticker=${encodeURIComponent(t)}`);
+  if (drawerTicker !== t || !drawerData) return;
+  drawerData.price_alerts = r.alerts;
+  const h = [...$$("#drawerBody h3")].find((x) => x.textContent === "Alerty cenowe");
+  if (!h) return;
+  const tmp = document.createElement("div"); tmp.innerHTML = alertBlock(drawerData);
+  let n = h.nextElementSibling; while (n && n.tagName !== "H3") { const nx = n.nextElementSibling; n.remove(); n = nx; }
+  h.replaceWith(...tmp.childNodes);
+}
+async function afterAlertChange(t, msg) {
+  toast(msg);
+  if (t && drawerTicker === t) refreshDrawerAlerts(t).catch(() => {});
+  if (loaded.portfolio) loadPortfolio().catch(() => {});
+  if (tblCompanies) {  // kolumna "Alert ceny"
+    const r = await api(`/api/alerts?ticker=${encodeURIComponent(t || "")}`).catch(() => null);
+    const row = t && tblCompanies.getRow(t);
+    if (row && r) row.update({ price_alerts: r.alerts.filter((a) => a.active || (a.triggered_at || "") >= new Date(Date.now() - 3 * 864e5).toISOString().slice(0, 10)) });
+  }
+}
+document.addEventListener("submit", async (e) => {
+  const f = e.target.closest("form[data-alform]"); if (!f) return;
+  e.preventDefault();
+  const v = Object.fromEntries(new FormData(f).entries()), t = f.dataset.alform;
+  try {
+    const r = await fetch("/api/alerts", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...v, ticker: t }) });
+    const j = await r.json(); if (!r.ok || j.ok === false) throw new Error(j.msg || r.statusText);
+    afterAlertChange(t, `Dodano alert ${v.kind === "buy" ? "kupna" : "sprzedaży"} ${t}`);
+  } catch (err) { toast("Nie udało się dodać alertu: " + err.message); }
+});
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("[data-aldel],[data-alrearm],[data-aledit]"); if (!b) return;
+  e.preventDefault(); e.stopPropagation();
+  const id = +(b.dataset.aldel || b.dataset.alrearm || b.dataset.aledit);
+  const all = (await api("/api/alerts")).alerts, a = all.find((x) => x.id === id); if (!a) return;
+  try {
+    if (b.dataset.aldel) {
+      if (!await ask({ title: `Usunąć alert ${a.ticker}?`, text: `${a.kind_label} przy ${fmtAlertPrice(a.price)} zł`, ok: "Usuń", danger: true })) return;
+      await api(`/api/alerts/${id}`, { method: "DELETE" }); afterAlertChange(a.ticker, "Usunięto alert");
+    } else if (b.dataset.alrearm) {
+      await api(`/api/alerts/${id}`, { method: "PATCH", body: { rearm: true } }); afterAlertChange(a.ticker, "Alert znów aktywny");
+    } else {
+      const p = await ask({ title: `Zmień próg alertu ${a.ticker}`, text: `${a.kind_label}; obecny kurs ${a.close == null ? "–" : fmtAlertPrice(a.close) + " zł"}`,
+        input: { label: "Cena (zł)", value: String(a.price) }, ok: "Zapisz" });
+      if (!p) return;
+      await api(`/api/alerts/${id}`, { method: "PATCH", body: { price: p, rearm: !a.active } }); afterAlertChange(a.ticker, "Zmieniono alert");
+    }
+  } catch (err) { toast("Błąd: " + err.message); }
+}, true);
+
 /* wyniki finansowe i jakość biznesu (długi termin) */
 const QUAL_DESC = "Ocena 0–100 z kryteriów: F-Score Piotroskiego (do 25 pkt), ROE co najmniej 10% w każdym z ostatnich lat (20), stabilna marża netto (10), dług netto / EBITDA poniżej 2 (15), dodatni wolny przepływ gotówki w 4 z 5 lat (15), Altman EM-Score ≥ 5,5 (15). Liczona z kryteriów dostępnych dla spółki.";
 function qualityBlock(d) {
@@ -845,6 +928,7 @@ async function openCompany(t) {
       - najedź na wskaźnik, żeby zobaczyć objaśnienie. Progi są orientacyjne, to nie rekomendacja.</p>
     <section id="companyChart" aria-label="Wykres"><div class="chart-ctl"></div><div class="chart-body"></div></section>
     ${qualityBlock(d)}
+    ${alertBlock(d)}
     <h3>Analiza fundamentalna</h3>
     ${afRatingControl(d)}
     ${d.analyses.length ? `<table>${d.analyses.map((a) => `<tr><td style="white-space:nowrap">${esc(a.date)}</td>
@@ -1124,7 +1208,7 @@ async function syncCompaniesPortfolio() {
 }
 
 async function loadPortfolio() {
-  pfData = await api(`/api/portfolio?pid=${pfPid || ""}`);
+  [pfData, pfAlerts] = await Promise.all([api(`/api/portfolio?pid=${pfPid || ""}`), api("/api/alerts")]);
   syncCompaniesPortfolio().catch(() => {});
   if (pfPid && !pfData.portfolios.some((p) => p.id === pfPid)) { setPfPid(null); return loadPortfolio(); }
   renderPortfolio(pfData);
@@ -1226,6 +1310,7 @@ function renderPortfolio(d) {
 
   $("#pfBody").innerHTML = `${pfTabs(d)}${kpi}${breakdown}
     <div class="scard"><h2>Alerty</h2>${alerts}</div>
+    ${priceAlertsCard()}
     <div class="scard"><h2>Pozycje</h2>${table}</div>
     ${calendarCard({ from: today(), to: new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10), events: d.events || [], schedules: 0, rpp_year_known: true }, 30, { onlyHeld: true, title: "Wydarzenia Twoich spółek – 30 dni" })}
     <div class="scard"><h2>Kalendarz dywidend</h2>${divs}</div>
@@ -1329,6 +1414,25 @@ function sellDialog(t = "", pid = null) {
     { url: "/api/positions/sell", method: "POST", done: "Zapisano sprzedaż",
       body: (f) => { const [portfolio_id, ticker] = f.pos.split("|"); return { ...f, portfolio_id, ticker }; } });
 }
+let pfAlerts = null;
+function priceAlertsCard() {
+  const list = pfAlerts?.alerts || [];
+  return `<div class="scard"><div class="scard-head"><h2>Alerty cenowe <span class="dim">– kup lub sprzedaj przy wybranej cenie</span></h2>
+      <button class="btn sm primary" data-aladd>Dodaj alert cenowy</button></div>
+    ${list.length ? `<table class="stable"><thead><tr><th>Spółka</th><th>Rodzaj</th><th class="n">Próg</th><th class="n">Kurs</th><th class="n" title="O ile kurs musi się zmienić, żeby alert zadziałał">Do progu</th><th>Status</th><th>Notatka</th><th></th></tr></thead><tbody>${alertRows(list, true)}</tbody></table>`
+      : `<p class="dim">Nie masz alertów cenowych. Dodaj próg zakupu (alert, gdy kurs spadnie do ceny) albo sprzedaży (gdy wzrośnie) – tutaj albo w panelu spółki.</p>`}
+    <p class="dim small">Sprawdzane przy każdym pobraniu notowań (dni sesyjne 10:00, 13:00, 17:10 i 18:30), także z minimum i maksimum dnia${pfAlerts?.push ? "; powiadomienie przychodzi też na telefon przez Home Assistant" : ""}. Alert, który zadziałał, pojawia się na górze listy Alerty.</p></div>`;
+}
+function alertAddDialog(ticker = "") {
+  pfDialog(`<h2>Dodaj alert cenowy</h2><div class="fgrid">
+      ${fld("ticker", "Spółka (ticker)", `list="tickerList" required ${ticker ? "readonly" : "autofocus"}`, ticker)}
+      <label class="fld"><span>Rodzaj</span><select name="kind"><option value="buy">Kupno – gdy kurs spadnie do</option><option value="sell">Sprzedaż – gdy kurs wzrośnie do</option></select></label>
+      ${fld("price", "Cena (zł)", 'type="number" step="any" min="0" required')}
+      ${fld("note", "Notatka (opcjonalnie)", 'maxlength="120"')}</div>`,
+    { url: "/api/alerts", method: "POST", done: "Dodano alert cenowy", body: (f) => ({ ...f, ticker: f.ticker.trim().toUpperCase() }),
+      after: () => { const t = $("#pfForm [name=ticker]")?.value?.trim().toUpperCase(); setTimeout(() => afterAlertChange(t, "Dodano alert cenowy"), 0); } });
+}
+
 function lotEditDialog(id) {
   const lot = pfData.positions.flatMap((p) => p.lots.map((l) => ({ ...l, ticker: p.ticker, pid: p.portfolio_id }))).find((l) => l.id === id);
   pfDialog(`<h2>Popraw partię ${esc(lot.ticker)}</h2><div class="fgrid">
@@ -1346,6 +1450,7 @@ function portfolioDialog(p = null) {
 $("#pfAdd").addEventListener("click", () => addLotDialog());
 $("#pfSell").addEventListener("click", () => pfData && sellDialog());
 $("#pfBody").addEventListener("click", async (e) => {
+  if (e.target.closest("[data-aladd]")) { alertAddDialog(); return; }
   const srt = e.target.closest("[data-pfsort]");
   if (srt) {
     const k = srt.dataset.pfsort;

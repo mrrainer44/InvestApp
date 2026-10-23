@@ -313,6 +313,14 @@ def _alerts(con, rows, prev, today):
             amount = f"{d['dps'] * qty[d['ticker']]:,.0f}".replace(",", " ")
             add(d["ticker"], "info", "dividend", f"Ostatni dzień z prawem do dywidendy {d['dps']:.2f} zł: "
                                                  f"{d['last_day']}, dla Ciebie ok. {amount} zł brutto")
+    # alerty cenowe: zadziałały w ostatnich 3 dniach (każda spółka, także spoza portfela - np. próg zakupu)
+    from . import alerts as palerts
+    recent = (date.fromisoformat(today) - timedelta(days=3)).isoformat()
+    for a in con.execute("SELECT * FROM price_alerts WHERE active=0 AND triggered_at>=? ORDER BY triggered_at DESC", (recent,)):
+        out.append({"ticker": a["ticker"], "level": "critical", "kind": "price_alert", "ts": a["triggered_at"],
+                    "portfolio_id": None, "portfolio": None,
+                    "text": f"Alert cenowy ({palerts.KINDS[a['kind']]} {a['price']:.2f} zł): kurs dotknął "
+                            f"{a['triggered_price']:.2f} zł".replace(".", ",") + (f" – {a['note']}" if a["note"] else "")})
     from . import ostrzezenia as gwarn
     warn = gwarn.compute(con)
     for t in tickers:

@@ -14,7 +14,7 @@ import traceback
 from datetime import date, datetime, timedelta
 
 from . import biznesradar as br
-from . import bankier, db, espi, flows, gpwpl, http, market, ofe, pressure
+from . import alerts, bankier, db, espi, flows, gpwpl, http, market, ofe, pressure
 from .config import (ESPI_FIRST_RUN_PAGES, ESPI_MAX_PAGES, LOG_DIR, MARKETS, MAX_PDF_BYTES,
                      PDF_CACHE, RATIOS)
 from .util import norm_company, norm_investor
@@ -599,6 +599,7 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
         if quick:  # w trakcie sesji: notowania i nowe komunikaty (ok. minuty)
             collect_market_tables(con, stats, quick=True)
             pressure.backfill_indices(con, 5, stats)  # zamknięcia indeksów z poprzednich sesji (archiwum gpw.pl)
+            alerts.check(con, stats)
             _market_context(con, stats)
             collect_espi(con, stats)
             reclassify_other(con, stats)
@@ -619,6 +620,7 @@ def run(weekly=False, limit=None, skip_espi=False, since=None, max_pages=None, o
             collect_market_tables(con, stats)
             pressure.backfill(con, 10, stats)  # uzupełnia sesje GPW z ostatnich dni, gdyby pobieranie wypadło
             pressure.backfill_indices(con, 10, stats)
+            alerts.check(con, stats)
             _market_context(con, stats)
             backfill_nc_history(con, stats)
         if not skip_espi and not ofe_only:

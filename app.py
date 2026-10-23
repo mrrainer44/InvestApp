@@ -10,7 +10,7 @@ from datetime import date, datetime, timedelta
 
 from flask import Flask, Response, abort, jsonify, request, send_from_directory
 
-from gpwt import (analyses, collect, config, db, flows, kalendarz, market, portfolio, pressure, quality, session,
+from gpwt import (alerts, analyses, collect, config, db, flows, kalendarz, market, portfolio, pressure, quality, session,
                   technicals, trends)
 from gpwt import ostrzezenia as gwarn
 from gpwt.config import ROOT, SERVER_HOST, SERVER_PORT
@@ -144,6 +144,11 @@ def companies():
     tech = technicals.compute(c)["rows"]
     warn = gwarn.compute(c)
     qual = quality.compute(c)
+    palerts = {}
+    for a in alerts.listing(c):
+        if a["active"] or (a["triggered_at"] or "") >= (today - timedelta(days=3)).isoformat():
+            palerts.setdefault(a["ticker"], []).append({k: a[k] for k in ("id", "kind", "price", "active", "triggered_at",
+                                                                           "triggered_price", "distance", "note")})
     custom = {}
     for r in c.execute("SELECT * FROM custom_values"):
         custom.setdefault(r["ticker"], {})[f"c_{r['key']}"] = r["value"]
@@ -202,6 +207,7 @@ def companies():
                 ("trend", "trend"), ("vs200", "vs200"), ("rs_1m", "rs_1m"), ("rs_3m", "rs_3m"), ("mom", "mom"),
                 ("new_high52", "new_high52"), ("new_low52", "new_low52"))},
             "warnings": warn.get(t) or None,
+            "price_alerts": palerts.get(t),
             **{k: (qual.get(t) or {}).get(src) for k, src in (
                 ("quality", "quality"), ("rev_ttm_yoy", "rev_ttm_yoy"), ("np_ttm_yoy", "np_ttm_yoy"), ("rev_yoy", "rev_yoy"),
                 ("np_yoy", "np_yoy"), ("roe", "roe"), ("roic", "roic"), ("net_margin", "net_margin"),
@@ -241,6 +247,7 @@ def company(ticker):
                                                            (ticker,))},
     }
     res["quality"] = quality.compute(c).get(ticker)
+    res["price_alerts"] = alerts.listing(c, ticker)
     res["quarters"] = quality.quarters(c, ticker)
     af_col = c.execute("SELECT key, label, options FROM custom_columns WHERE key='ocena_af'").fetchone()
     res["af_column"] = ({"key": af_col["key"], "label": af_col["label"], "options": json.loads(af_col["options"] or "[]")}
@@ -469,6 +476,33 @@ def get_market():
     r = market.context(c)
     c.close()
     return jsonify(r)
+
+
+# ---------------- alerty cenowe ----------------
+
+@app.get("/api/alerts")
+def get_alerts():
+    c = con()
+    r = alerts.listing(c, (request.args.get("ticker") or "").upper() or None)
+    c.close()
+    return jsonify({"alerts": r, "push": bool(config.HA_URL and config.HA_TOKEN and config.HA_NOTIFY)})
+
+
+@app.post("/api/alerts")
+def add_alert():
+    d = request.get_json(force=True)
+    return _portfolio_write(lambda c: {"id": alerts.add(c, d)})
+
+
+@app.patch("/api/alerts/<int:aid>")
+def edit_alert(aid):
+    d = request.get_json(force=True)
+    return _portfolio_write(lambda c: alerts.update(c, aid, d))
+
+
+@app.delete("/api/alerts/<int:aid>")
+def delete_alert(aid):
+    return _portfolio_write(lambda c: alerts.delete(c, aid))
 
 
 # ---------------- kalendarz ----------------
