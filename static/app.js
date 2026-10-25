@@ -967,12 +967,13 @@ function commentBlock(d) {
   const cm = d.comment;
   if (!cm) return "";
   return `<div class="cm-box" data-key="${esc(cm.key)}">
-      <textarea id="cmText" rows="2" maxlength="2000" placeholder="Twoje uwagi do spółki – zapisują się same i są widoczne w kolumnie „${esc(cm.label)}” w zakładce Spółki"
+      <textarea id="cmText" rows="${Math.min(6, Math.max(1, (cm.value || "").split("
+").length + Math.floor((cm.value || "").length / 90)))}" maxlength="2000" placeholder="Twoje uwagi do spółki – zapisują się same i są widoczne w kolumnie „${esc(cm.label)}” w zakładce Spółki"
         aria-label="${esc(cm.label)}">${esc(cm.value || "")}</textarea>
       <span class="dim small" id="cmState">${cm.updated ? `${esc(cm.label)} · zapisano ${esc(dd(cm.updated.slice(0, 10)))} ${esc(cm.updated.slice(11, 16))}` : esc(cm.label)}</span>
     </div>`;
 }
-const cmGrow = (el) => { el.style.height = "auto"; el.style.height = `${el.scrollHeight + 2}px`; };
+const cmGrow = (el) => { el.style.height = "auto"; el.style.height = `${Math.min(el.scrollHeight + 2, 220)}px`; };
 async function saveComment(t, key, value) {
   if (drawerData?.comment && drawerTicker === t) {
     if ((drawerData.comment.value || "") === value) return;
@@ -1081,7 +1082,6 @@ async function openCompany(t) {
       <td><a href="${esc(espiHref(x.url))}" target="_blank" rel="noopener">${esc(x.title)}</a></td></tr>`).join("")}</table>` : `<p class="dim">Brak komunikatów w bazie.</p>`}`;
   $("#drawer").classList.add("open"); $("#drawer").setAttribute("aria-hidden", "false");
   renderChart();
-  if ($("#cmText")) cmGrow($("#cmText"));
   // dymek wskaźnika przy prawej krawędzi panelu otwiera się w lewo, żeby nie wychodził poza panel
   const facts = $("#drawerBody .facts");
   $$(".fact", facts).forEach((f) => f.classList.toggle("edge", f.offsetLeft + 300 > facts.clientWidth));
