@@ -256,6 +256,11 @@ def company(ticker):
     af_col = c.execute("SELECT key, label, options FROM custom_columns WHERE key='ocena_af'").fetchone()
     res["af_column"] = ({"key": af_col["key"], "label": af_col["label"], "options": json.loads(af_col["options"] or "[]")}
                         if af_col else None)
+    # notatka w panelu spółki = własna kolumna tekstowa "Komentarz" z tabeli Spółki (ta sama wartość)
+    cm = c.execute("SELECT c.key, c.label, v.value, v.updated FROM custom_columns c LEFT JOIN custom_values v "
+                   "ON v.key=c.key AND v.ticker=? WHERE c.type='text' AND (c.key='komentarz' OR lower(c.label)='komentarz') "
+                   "ORDER BY c.key='komentarz' DESC LIMIT 1", (ticker,)).fetchone()
+    res["comment"] = dict(cm) if cm else None
     c.close()
     return jsonify(res)
 

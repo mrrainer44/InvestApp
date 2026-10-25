@@ -717,6 +717,20 @@ def test_pipeline():
         cl.put(f"/api/flags/{th}", json={"flag": "auto"})
     assert cl.put(f"/api/flags/{tred}", json={"flag": "auto"}).get_json()["flag"]["manual"] is None
     assert not db.connect().execute("SELECT COUNT(*) FROM company_flags").fetchone()[0]
+    # komentarz w panelu spółki = kolumna "Komentarz" z tabeli Spółki
+    had_cm = any(x["key"] == "komentarz" for x in cl.get("/api/columns").get_json())
+    if not had_cm:
+        assert cl.get("/api/company/PKO").get_json()["comment"] is None
+        cl.post("/api/columns", json={"label": "Komentarz", "type": "text"})
+    cm = cl.get("/api/company/PKO").get_json()["comment"]
+    assert cm["key"] == "komentarz" and cm["value"] is None
+    cl.put("/api/values", json={"ticker": "PKO", "key": "komentarz", "value": "czekać na korektę"})
+    cm = cl.get("/api/company/PKO").get_json()["comment"]
+    assert cm["value"] == "czekać na korektę" and cm["updated"]
+    assert next(x for x in cl.get("/api/companies").get_json() if x["ticker"] == "PKO")["c_komentarz"] == "czekać na korektę"
+    cl.put("/api/values", json={"ticker": "PKO", "key": "komentarz", "value": ""})
+    if not had_cm:
+        cl.delete("/api/columns/komentarz")
     # szybkie pobieranie w trakcie sesji
     st_q, stats_q = collect.run(quick=True)
     assert st_q == "ok" and stats_q["quotes_GPW"] == 5 and "ratio_cz_GPW" not in stats_q, stats_q

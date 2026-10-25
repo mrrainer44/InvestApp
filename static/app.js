@@ -403,6 +403,7 @@ async function loadCompanies() {
     if (v === false) v = "";
     await api("/api/values", { method: "PUT", body: { ticker: cell.getRow().getIndex(), key, value: v } });
     if (key === "ocena_af") syncAfRating(cell.getRow().getIndex(), key, v || "");
+    syncComment(cell.getRow().getIndex(), key, v || "");
     toast("Zapisano");
   });
 }
@@ -961,6 +962,50 @@ function afRatingControl(d) {
         class="${o ? AF_TONE[o] || "" : "none"}">${o ? esc(o) : "brak oceny"}</button>`).join("")}
     </div>`;
 }
+// komentarz w panelu spółki: ta sama wartość co kolumna "Komentarz" w tabeli Spółki, zapis automatyczny
+function commentBlock(d) {
+  const cm = d.comment;
+  if (!cm) return "";
+  return `<div class="cm-box" data-key="${esc(cm.key)}">
+      <textarea id="cmText" rows="2" maxlength="2000" placeholder="Twoje uwagi do spółki – zapisują się same i są widoczne w kolumnie „${esc(cm.label)}” w zakładce Spółki"
+        aria-label="${esc(cm.label)}">${esc(cm.value || "")}</textarea>
+      <span class="dim small" id="cmState">${cm.updated ? `${esc(cm.label)} · zapisano ${esc(dd(cm.updated.slice(0, 10)))} ${esc(cm.updated.slice(11, 16))}` : esc(cm.label)}</span>
+    </div>`;
+}
+const cmGrow = (el) => { el.style.height = "auto"; el.style.height = `${el.scrollHeight + 2}px`; };
+async function saveComment(t, key, value) {
+  if (drawerData?.comment && drawerTicker === t) {
+    if ((drawerData.comment.value || "") === value) return;
+    drawerData.comment.value = value;
+  }
+  const st = $("#cmState");
+  try {
+    await api("/api/values", { method: "PUT", body: { ticker: t, key, value } });
+    const now = new Date();
+    if (st && drawerTicker === t) st.textContent = `Zapisano ${now.toTimeString().slice(0, 5)}`;
+    const r = tblCompanies?.getRow(t);
+    if (r) r.update({ [`c_${key}`]: value || null });
+    if (companiesCache?.rows[t]) companiesCache.rows[t][`c_${key}`] = value || null;
+  } catch { if (st) st.textContent = "Nie udało się zapisać – spróbuj ponownie"; }
+}
+const saveCommentSoon = debounce((t, key, v) => saveComment(t, key, v), 1500);
+document.addEventListener("input", (e) => {
+  if (e.target.id !== "cmText" || !drawerTicker) return;
+  cmGrow(e.target);
+  $("#cmState").textContent = "Zapisuję…";
+  saveCommentSoon(drawerTicker, e.target.closest(".cm-box").dataset.key, e.target.value.trim());
+});
+document.addEventListener("focusout", (e) => {
+  if (e.target.id !== "cmText" || !drawerTicker) return;
+  saveComment(drawerTicker, e.target.closest(".cm-box").dataset.key, e.target.value.trim());
+});
+// zmiana w tabeli Spółki -> otwarty panel tej spółki
+function syncComment(ticker, key, value) {
+  if (drawerTicker !== ticker || drawerData?.comment?.key !== key) return;
+  drawerData.comment.value = value || "";
+  const el = $("#cmText");
+  if (el && document.activeElement !== el) { el.value = value || ""; cmGrow(el); }
+}
 function syncAfRating(ticker, key, value) {
   if (drawerTicker === ticker) $$(`#drawerBody .af-rate[data-key="${key}"] button`).forEach((b) => b.setAttribute("aria-checked", String(b.dataset.v === value)));
   const r = tblCompanies?.getRow(ticker);
@@ -1009,6 +1054,7 @@ async function openCompany(t) {
     </div>
     <p class="dim chart-note lvl-legend">${["good", "neutral", "warn", "bad"].map((l) => `${levelIcon(l)} ${LEVEL[l].toLowerCase()}`).join(" · ")}
       - najedź na wskaźnik, żeby zobaczyć objaśnienie. Progi są orientacyjne, to nie rekomendacja.</p>
+    ${commentBlock(d)}
     <section id="companyChart" aria-label="Wykres"><div class="chart-ctl"></div><div class="chart-body"></div></section>
     ${qualityBlock(d)}
     ${alertBlock(d)}
@@ -1035,6 +1081,7 @@ async function openCompany(t) {
       <td><a href="${esc(espiHref(x.url))}" target="_blank" rel="noopener">${esc(x.title)}</a></td></tr>`).join("")}</table>` : `<p class="dim">Brak komunikatów w bazie.</p>`}`;
   $("#drawer").classList.add("open"); $("#drawer").setAttribute("aria-hidden", "false");
   renderChart();
+  if ($("#cmText")) cmGrow($("#cmText"));
   // dymek wskaźnika przy prawej krawędzi panelu otwiera się w lewo, żeby nie wychodził poza panel
   const facts = $("#drawerBody .facts");
   $$(".fact", facts).forEach((f) => f.classList.toggle("edge", f.offsetLeft + 300 > facts.clientWidth));
