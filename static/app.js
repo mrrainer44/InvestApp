@@ -967,8 +967,7 @@ function commentBlock(d) {
   const cm = d.comment;
   if (!cm) return "";
   return `<div class="cm-box" data-key="${esc(cm.key)}">
-      <textarea id="cmText" rows="${Math.min(6, Math.max(1, (cm.value || "").split("
-").length + Math.floor((cm.value || "").length / 90)))}" maxlength="2000" placeholder="Twoje uwagi do spółki – zapisują się same i są widoczne w kolumnie „${esc(cm.label)}” w zakładce Spółki"
+      <textarea id="cmText" rows="${Math.min(6, Math.max(1, (cm.value || "").split("\n").length + Math.floor((cm.value || "").length / 90)))}" maxlength="2000" placeholder="Twoje uwagi do spółki – zapisują się same i są widoczne w kolumnie „${esc(cm.label)}” w zakładce Spółki"
         aria-label="${esc(cm.label)}">${esc(cm.value || "")}</textarea>
       <span class="dim small" id="cmState">${cm.updated ? `${esc(cm.label)} · zapisano ${esc(dd(cm.updated.slice(0, 10)))} ${esc(cm.updated.slice(11, 16))}` : esc(cm.label)}</span>
     </div>`;
