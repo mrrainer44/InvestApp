@@ -672,6 +672,15 @@ def test_pipeline():
     assert any(x["kind"] == "price_alert" for x in cl.get("/api/portfolio").get_json()["alerts"])
     assert next(x for x in cl.get("/api/companies").get_json() if x["ticker"] == "PKO")["price_alerts"]
     assert alerts.check(db.connect()) == []  # jednorazowy - drugi raz nie działa
+    # zrealizowany -> na górze listy; odhaczenie przenosi do odhaczonych i zdejmuje z kart Alerty i kolumny
+    lst = cl.get("/api/alerts").get_json()["alerts"]
+    assert lst[0]["id"] == a_buy and lst[0]["state"] == "hit" and lst[1]["state"] == "active"
+    assert cl.patch(f"/api/alerts/{a_sell}", json={"done": True}).status_code == 400  # aktywnego nie odhaczamy
+    assert cl.patch(f"/api/alerts/{a_buy}", json={"done": True}).get_json()["ok"]
+    lst = {x["id"]: x for x in cl.get("/api/alerts").get_json()["alerts"]}
+    assert lst[a_buy]["state"] == "done" and lst[a_buy]["done"] and lst[a_buy]["triggered_price"] is not None
+    assert not any(x["kind"] == "price_alert" for x in cl.get("/api/portfolio").get_json()["alerts"])
+    assert [a["id"] for a in next(x for x in cl.get("/api/companies").get_json() if x["ticker"] == "PKO")["price_alerts"]] == [a_sell]
     cl.patch(f"/api/alerts/{a_buy}", json={"rearm": True, "price": 0.5})  # poniżej minimum dnia (w danych testowych 1 zł)
     lst = {x["id"]: x for x in cl.get("/api/alerts").get_json()["alerts"]}
     assert lst[a_buy]["active"] and lst[a_buy]["triggered_at"] is None and lst[a_buy]["price"] == 0.5

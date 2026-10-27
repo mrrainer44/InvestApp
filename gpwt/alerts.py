@@ -2,7 +2,8 @@
 
 Sprawdzane przy każdym pobraniu notowań (w dni sesyjne 10:00, 13:00, 17:10 i 18:30). Pod uwagę bierzemy także
 minimum i maksimum dnia, więc alert zadziała, gdy kurs dotknie progu w trakcie sesji, nawet jeśli potem odbił.
-Alert jest jednorazowy: po zadziałaniu przestaje być aktywny (można go ponownie włączyć). Opcjonalnie wysyłamy
+Alert jest jednorazowy: po zadziałaniu przestaje być aktywny i jest "zrealizowany" - wyróżniony, dopóki go nie
+odhaczysz (done). Zrealizowany albo odhaczony alert można włączyć ponownie, także z nową ceną. Opcjonalnie wysyłamy
 powiadomienie przez Home Assistant (config: GPWT_HA_URL, GPWT_HA_TOKEN, GPWT_HA_NOTIFY).
 """
 import json
@@ -51,10 +52,15 @@ def update(con, aid, d):
         raise ValueError("Nieznany rodzaj alertu")
     note = (d.get("note") or "").strip() or None if "note" in d else row["note"]
     rearm = bool(d.get("rearm"))
-    con.execute("UPDATE price_alerts SET kind=?, price=?, note=?, active=?, triggered_at=?, triggered_price=?, notified=? "
-                "WHERE id=?", (kind, price, note, 1 if rearm else row["active"],
-                               None if rearm else row["triggered_at"], None if rearm else row["triggered_price"],
-                               0 if rearm else row["notified"], aid))
+    done = row["done"]
+    if "done" in d and not rearm:
+        if d["done"] and row["active"]:
+            raise ValueError("Odhaczyć można tylko alert, który zadziałał")
+        done = _now() if d["done"] else None
+    con.execute("UPDATE price_alerts SET kind=?, price=?, note=?, active=?, triggered_at=?, triggered_price=?, notified=?, "
+                "done=? WHERE id=?", (kind, price, note, 1 if rearm else row["active"],
+                                      None if rearm else row["triggered_at"], None if rearm else row["triggered_price"],
+                                      0 if rearm else row["notified"], None if rearm else done, aid))
 
 
 def delete(con, aid):
@@ -79,12 +85,15 @@ def listing(con, ticker=None):
     _, q = _quotes(con)
     names = {r[0]: r[1] for r in con.execute("SELECT ticker, COALESCE(full_name, short_name) FROM companies")}
     held = {r[0] for r in con.execute("SELECT DISTINCT ticker FROM positions WHERE closed IS NULL")}
-    sql = "SELECT * FROM price_alerts" + (" WHERE ticker=?" if ticker else "") + " ORDER BY active DESC, triggered_at DESC, id"
+    # najpierw zrealizowane (do odhaczenia), potem aktywne, na końcu odhaczone
+    sql = ("SELECT * FROM price_alerts" + (" WHERE ticker=?" if ticker else "") +
+           " ORDER BY CASE WHEN active=0 AND done IS NULL THEN 0 WHEN active=1 THEN 1 ELSE 2 END, triggered_at DESC, id")
     out = []
     for r in con.execute(sql, (ticker,) if ticker else ()):
         x = dict(r)
         close = (q.get(r["ticker"]) or {}).get("close")
         x.update(name=names.get(r["ticker"]), close=close, held=r["ticker"] in held, kind_label=KINDS[r["kind"]],
+                 state="active" if r["active"] else "done" if r["done"] else "hit",
                  # odległość do progu: ile kurs musi spaść (kupno) albo wzrosnąć (sprzedaż), w %
                  distance=((r["price"] / close - 1) * 100) if close else None)
         out.append(x)

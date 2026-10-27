@@ -63,7 +63,7 @@ CREATE TABLE IF NOT EXISTS company_flags(
   ticker TEXT PRIMARY KEY, flag TEXT NOT NULL, note TEXT, updated TEXT);
 CREATE TABLE IF NOT EXISTS price_alerts(
   id INTEGER PRIMARY KEY AUTOINCREMENT, ticker TEXT NOT NULL, kind TEXT NOT NULL, price REAL NOT NULL, note TEXT,
-  created TEXT, active INTEGER DEFAULT 1, triggered_at TEXT, triggered_price REAL, notified INTEGER DEFAULT 0
+  created TEXT, active INTEGER DEFAULT 1, triggered_at TEXT, triggered_price REAL, notified INTEGER DEFAULT 0, done TEXT
 );
 CREATE TABLE IF NOT EXISTS portfolios(
   id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, created TEXT
@@ -122,6 +122,8 @@ def init():
     with session() as con:
         con.executescript(SCHEMA)
         _migrate_portfolios(con)
+        if "done" not in {r[1] for r in con.execute("PRAGMA table_info(price_alerts)")}:  # odhaczenie alertu
+            con.execute("ALTER TABLE price_alerts ADD COLUMN done TEXT")
 
 
 def _migrate_portfolios(con):

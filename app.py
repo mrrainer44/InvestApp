@@ -147,9 +147,9 @@ def companies():
     fl_auto, fl_man = flags.compute(c), flags.manual(c)
     palerts = {}
     for a in alerts.listing(c):
-        if a["active"] or (a["triggered_at"] or "") >= (today - timedelta(days=3)).isoformat():
+        if a["state"] != "done":
             palerts.setdefault(a["ticker"], []).append({k: a[k] for k in ("id", "kind", "price", "active", "triggered_at",
-                                                                           "triggered_price", "distance", "note")})
+                                                                           "triggered_price", "distance", "note", "state")})
     custom = {}
     for r in c.execute("SELECT * FROM custom_values"):
         custom.setdefault(r["ticker"], {})[f"c_{r['key']}"] = r["value"]
