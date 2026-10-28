@@ -299,8 +299,14 @@ def _alerts(con, rows, prev, today):
     qm = ",".join("?" * len(tickers))
     since3 = (date.fromisoformat(today) - timedelta(days=ESPI_DAYS)).isoformat()
     since5 = f"{_sessions_back(con, 5) or today} 17:00"
+    # komunikaty o zmianie stanu posiadania, które odczytaliśmy jako transakcję, pokazujemy raz - jako transakcję
+    parsed = {(r[0], r[1]) for r in con.execute(
+        f"SELECT c.ticker, e.ts FROM changes c JOIN espi e ON e.id=c.espi_id/10 WHERE c.ticker IN ({qm}) "
+        f"AND c.source IN ('mar','art69') AND c.excluded=0 AND e.ts>?", (*tickers, since5))}
     for e in con.execute(f"SELECT ticker, ts, title, category FROM espi WHERE ticker IN ({qm}) AND ts>? ORDER BY ts DESC",
                          (*tickers, since3)):
+        if (e["ticker"], e["ts"]) in parsed:
+            continue
         lvl = "warn" if e["category"] in ("wezwanie", "art69", "mar") else "info"
         add(e["ticker"], lvl, "espi", f"Komunikat: {_subject(e['title'])}", e["ts"], until=plus(e["ts"], ESPI_DAYS))
     for h in con.execute(
