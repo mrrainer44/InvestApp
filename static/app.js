@@ -1385,6 +1385,15 @@ function pfTabs(d) {
       <button class="btn sm danger" data-pfdel="${(cur || d.portfolios[0]).id}">Usuń portfel</button>` : ""}</div>`;
 }
 
+// karta Alerty: kiedy powstał alert i do kiedy jest ważny (zdarzenia wygasają, stany trwają, dopóki są prawdziwe)
+const alDate = (s) => s ? `${s.slice(8, 10)}.${s.slice(5, 7)}${s.length > 10 ? " " + s.slice(11, 16) : ""}` : "";
+function alertWhen(a, asOf) {
+  const when = a.ts ? alDate(a.ts) : asOf ? `stan na ${alDate(asOf.replace("T", " ").slice(0, 16))}` : "";
+  const valid = a.until_text ? a.until_text : a.until ? (a.until === today() ? "ważny dziś" : `ważny do ${alDate(a.until)}`) : "trwa";
+  const tip = a.until ? "Zdarzenie – po tej dacie zniknie z listy" : a.until_text ? "Zostaje, dopóki go nie odhaczysz w Alertach cenowych"
+    : "Stan liczony z ostatnich notowań i danych – zniknie, gdy przestanie być prawdziwy";
+  return `<span class="al-when" title="${tip}">${esc(when)}${when ? " · " : ""}<span class="${a.until || a.until_text ? "" : "dim"}">${esc(valid)}</span></span>`;
+}
 function renderPortfolio(d) {
   $("#pfAsOf").textContent = d.as_of ? `wycena po ostatniej transakcji z ${d.as_of.replace("T", " ").slice(0, 16)}` : "";
   const T = d.totals, all = !pfPid && d.portfolios.length > 1;
@@ -1420,7 +1429,7 @@ function renderPortfolio(d) {
       </tbody></table></div>` : "";
 
   const alerts = d.alerts.length ? `<ul class="alerts">${d.alerts.map((a) => `<li class="al-${a.level}">${levelIcon(ALERT_LVL[a.level])}
-      ${tk(a.ticker)} ${all ? pfTag(a.portfolio) : ""} ${esc(a.text)} ${a.ts ? `<span class="dim">${esc(dd(a.ts.slice(0, 10)))} ${esc(a.ts.slice(11, 16))}</span>` : ""}</li>`).join("")}</ul>`
+      <span class="al-txt">${tk(a.ticker)} ${all ? pfTag(a.portfolio) : ""} ${esc(a.text)}</span>${alertWhen(a, d.as_of)}</li>`).join("")}</ul>`
     : `<p class="dim">Brak alertów – nic nie przebiło poziomów z planu, brak nowych komunikatów i transakcji insiderów.</p>`;
 
   const rows = sortPositions(d.positions).map((p) => {

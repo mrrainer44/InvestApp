@@ -669,7 +669,11 @@ def test_pipeline():
     lst = {x["id"]: x for x in cl.get("/api/alerts?ticker=PKO").get_json()["alerts"]}
     assert not lst[a_buy]["active"] and lst[a_buy]["triggered_price"] is not None and lst[a_sell]["active"]
     assert abs(lst[a_sell]["distance"] - 100) < 1e-6
-    assert any(x["kind"] == "price_alert" for x in cl.get("/api/portfolio").get_json()["alerts"])
+    pal = cl.get("/api/portfolio").get_json()["alerts"]
+    assert any(x["kind"] == "price_alert" and x["ts"] and x["until_text"] for x in pal)
+    from datetime import date as _d
+    assert all("until" in x and (not x["until"] or x["until"] >= _d.today().isoformat()) for x in pal)  # bez historycznych
+    assert all(x["ts"] and x["until"] for x in pal if x["kind"] in ("espi", "insider"))
     assert next(x for x in cl.get("/api/companies").get_json() if x["ticker"] == "PKO")["price_alerts"]
     assert alerts.check(db.connect()) == []  # jednorazowy - drugi raz nie działa
     # zrealizowany -> na górze listy; odhaczenie przenosi do odhaczonych i zdejmuje z kart Alerty i kolumny

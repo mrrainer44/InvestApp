@@ -66,22 +66,24 @@ def _compute(con, today=None):
         "LEFT JOIN ratios r ON r.ticker=c.ticker")}
     out = {}
 
-    def add(tk, kind, level, text):
-        out.setdefault(tk, []).append({"kind": kind, "level": level, "text": text})
+    def add(tk, kind, level, text, ts=None):
+        # ts - data zdarzenia (emisja, ostatnia sprzedaż, termin raportu); stany bez daty (skrajne wskaźniki) mają None
+        out.setdefault(tk, []).append({"kind": kind, "level": level, "text": text, "ts": ts})
 
     # emisje akcji
     for r in con.execute("SELECT ticker, ts, title FROM espi WHERE ts>=? AND ticker IS NOT NULL ORDER BY ts DESC",
                          ((today - timedelta(days=60)).isoformat(),)):
         if espi.share_issue(r["title"]) and not any(w["kind"] == "emisja" for w in out.get(r["ticker"], [])):
             add(r["ticker"], "emisja", "warn", f"Emisja akcji / podwyższenie kapitału: {espi.split_title(r['title'])[1]} "
-                                              f"({r['ts'][8:10]}.{r['ts'][5:7]})")
+                                              f"({r['ts'][8:10]}.{r['ts'][5:7]})", r["ts"])
 
     # sprzedaż głównego akcjonariusza lub insidera po dużym wzroście (jedno ostrzeżenie na spółkę)
     sellers = {}
-    for r in con.execute("SELECT ticker, investor, SUM(delta) d, SUM(value) v, source FROM changes "
+    for r in con.execute("SELECT ticker, investor, SUM(delta) d, SUM(value) v, source, MAX(date) last FROM changes "
                          "WHERE source IN ('art69','mar') AND excluded=0 AND date>=? GROUP BY ticker, investor_norm, source "
                          "HAVING SUM(delta) < 0", ((today - timedelta(days=30)).isoformat(),)):
-        g = sellers.setdefault(r["ticker"], {"who": [], "shares": 0.0, "value": 0.0})
+        g = sellers.setdefault(r["ticker"], {"who": [], "shares": 0.0, "value": 0.0, "last": r["last"]})
+        g["last"] = max(g["last"], r["last"])
         if r["investor"] not in g["who"]:
             g["who"].append(r["investor"])
         g["shares"] += -r["d"]
@@ -94,7 +96,7 @@ def _compute(con, today=None):
             who = g["who"][0] if len(g["who"]) == 1 else f"{len(g['who'])} sprzedających ({', '.join(g['who'][:2])}...)"
             val = f", ok. {_pl(g['value'] / 1e6, 1)} mln zł" if g["value"] else ""
             add(tk, "sprzedaz", "warn", f"Duzi akcjonariusze lub insiderzy sprzedają po wzroście kursu ({rise}): {who} - "
-                                       f"{_pl(g['shares'], 0)} akcji{val} w 30 dni")
+                                       f"{_pl(g['shares'], 0)} akcji{val} w 30 dni", g["last"])
 
     # raporty okresowe: dane finansowe w Biznesradar starsze niż okres po terminie ustawowym I brak raportu okresowego
     # w komunikatach od końca tego kwartału (samo opóźnienie Biznesradar to za mało - często to tylko jego dane)
@@ -132,7 +134,7 @@ def _compute(con, today=None):
         if last_periodic.get(tk, "") < (date.fromisoformat(last_due) - timedelta(days=1)).isoformat():
             kind = next(k for k, d in kinds.items() if d == last_due)
             add(tk, "raport_opozniony", "warn", f"Według harmonogramu {espi.REPORT_LABEL[kind]} miał się ukazać "
-                                                f"{last_due[8:10]}.{last_due[5:7]} - nie widać go w komunikatach")
+                                                f"{last_due[8:10]}.{last_due[5:7]} - nie widać go w komunikatach", last_due)
 
     # NewConnect: skrajne wskaźniki
     for tk, c in co.items():

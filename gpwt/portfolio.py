@@ -252,6 +252,9 @@ def _events(con, rows):
     return [e for e in kalendarz.events(con, 30)["events"] if e["ticker"] in held]
 
 
+ESPI_DAYS, EVENT_DAYS = 3, 7  # ile dni komunikat i zdarzenie (insider, emisja, sprzedaż) zostają na liście Alerty
+
+
 def _alerts(con, rows, prev, today):
     """Alerty dla posiadanych spółek, od najważniejszych. level: critical / warn / info.
     Alerty z planu dotyczą pozycji w konkretnym portfelu, komunikaty i dywidendy - spółki (portfolio_id=None)."""
@@ -260,9 +263,14 @@ def _alerts(con, rows, prev, today):
     for r in rows:
         qty[r["ticker"]] = qty.get(r["ticker"], 0) + r["qty"]
 
-    def add(t, level, kind, text, ts=None, r=None):
-        out.append({"ticker": t, "level": level, "kind": kind, "text": text, "ts": ts,
+    # ts - kiedy powstał alert (zdarzenie); until - do kiedy jest ważny (potem znika z listy). Alerty bez until to
+    # stany (kurs pod poziomem wyjścia, płynność, skrajne wskaźniki) - ważne, dopóki trwają, liczone z ostatnich notowań.
+    def add(t, level, kind, text, ts=None, r=None, until=None):
+        out.append({"ticker": t, "level": level, "kind": kind, "text": text, "ts": ts, "until": until,
                     "portfolio_id": r["portfolio_id"] if r else None, "portfolio": r["portfolio"] if r else None})
+
+    def plus(ts, days):
+        return (date.fromisoformat(ts[:10]) + timedelta(days=days)).isoformat()
 
     for r in rows:
         t, close, p = r["ticker"], r["close"], r["plan"]
@@ -280,21 +288,21 @@ def _alerts(con, rows, prev, today):
                 f"Pozycja to {r['exit_days']:.1f} dnia sprzedaży przy 20% średniego dziennego obrotu - wyjście może "
                 f"potrwać i ruszyć kursem", r=r)
         if p["review"] and p["review"] <= today:
-            add(t, "info", "review", f"Minął termin przeglądu planu ({p['review']})", r=r)
+            add(t, "info", "review", f"Minął termin przeglądu planu ({p['review']})", p["review"], r=r)
     tickers = sorted(qty)
     if not tickers:
         return out
     chg = {r["ticker"]: r["chg"] for r in rows}
     for t in tickers:
         if chg.get(t) is not None and abs(chg[t]) >= 5:
-            add(t, "warn", "move", f"Dzisiejsza zmiana kursu {chg[t]:+.2f}%")
+            add(t, "warn", "move", f"Zmiana kursu na ostatniej sesji {chg[t]:+.2f}%", today, until=today)
     qm = ",".join("?" * len(tickers))
-    since1 = f"{prev} 17:00" if prev else today
+    since3 = (date.fromisoformat(today) - timedelta(days=ESPI_DAYS)).isoformat()
     since5 = f"{_sessions_back(con, 5) or today} 17:00"
     for e in con.execute(f"SELECT ticker, ts, title, category FROM espi WHERE ticker IN ({qm}) AND ts>? ORDER BY ts DESC",
-                         (*tickers, since1)):
+                         (*tickers, since3)):
         lvl = "warn" if e["category"] in ("wezwanie", "art69", "mar") else "info"
-        add(e["ticker"], lvl, "espi", f"Komunikat: {_subject(e['title'])}", e["ts"])
+        add(e["ticker"], lvl, "espi", f"Komunikat: {_subject(e['title'])}", e["ts"], until=plus(e["ts"], ESPI_DAYS))
     for h in con.execute(
             f"SELECT c.ticker, c.investor, c.delta, c.value, c.source, e.ts FROM changes c JOIN espi e ON e.id=c.espi_id/10 "
             f"WHERE c.ticker IN ({qm}) AND c.source IN ('mar','art69') AND c.excluded=0 AND e.ts>? ORDER BY e.ts DESC",
@@ -303,30 +311,35 @@ def _alerts(con, rows, prev, today):
         val = f" (ok. {abs(h['value']) / 1e3:,.0f} tys. zł)".replace(",", " ") if h["value"] else ""
         add(h["ticker"], "warn" if h["delta"] < 0 else "info", "insider",
             f"{who} {h['investor']} {'kupił' if h['delta'] > 0 else 'sprzedał'} {abs(h['delta']):,.0f} akcji{val}"
-            .replace(",", " "), h["ts"])
+            .replace(",", " "), h["ts"], until=plus(h["ts"], EVENT_DAYS))
     for d in con.execute(f"SELECT ticker, last_day, dps FROM dividends WHERE ticker IN ({qm}) AND dps>0 AND last_day>=?",
                          (*tickers, prev or today)):
         if d["last_day"] == prev:
             add(d["ticker"], "info", "exdiv", f"Dziś dzień odcięcia dywidendy {d['dps']:.2f} zł - spadek kursu o jej "
-                                              f"wartość jest techniczny")
+                                              f"wartość jest techniczny", today, until=today)
         elif d["last_day"] <= (date.fromisoformat(today) + timedelta(days=14)).isoformat():
             amount = f"{d['dps'] * qty[d['ticker']]:,.0f}".replace(",", " ")
             add(d["ticker"], "info", "dividend", f"Ostatni dzień z prawem do dywidendy {d['dps']:.2f} zł: "
-                                                 f"{d['last_day']}, dla Ciebie ok. {amount} zł brutto")
+                                                 f"{d['last_day']}, dla Ciebie ok. {amount} zł brutto", until=d["last_day"])
     # alerty cenowe zrealizowane, a jeszcze nieodhaczone (każda spółka, także spoza portfela - np. próg zakupu)
     from . import alerts as palerts
     for a in con.execute("SELECT * FROM price_alerts WHERE active=0 AND done IS NULL ORDER BY triggered_at DESC"):
         out.append({"ticker": a["ticker"], "level": "critical", "kind": "price_alert", "ts": a["triggered_at"],
-                    "portfolio_id": None, "portfolio": None,
+                    "until": None, "until_text": "do odhaczenia", "portfolio_id": None, "portfolio": None,
                     "text": f"Alert cenowy ({palerts.KINDS[a['kind']]} {a['price']:.2f} zł): kurs dotknął "
                             f"{a['triggered_price']:.2f} zł".replace(".", ",") + (f" – {a['note']}" if a["note"] else "")})
     from . import ostrzezenia as gwarn
     warn = gwarn.compute(con)
     for t in tickers:
         for w in warn.get(t, []):
-            add(t, "warn" if w["level"] == "warn" else "info", f"warn_{w['kind']}", "Ostrzeżenie: " + w["text"])
+            # emisja i sprzedaż dużych akcjonariuszy to zdarzenia - po tygodniu znikają; reszta to stan (trwa)
+            ts = w.get("ts")
+            event = w["kind"] in ("emisja", "sprzedaz") and ts
+            add(t, "warn" if w["level"] == "warn" else "info", f"warn_{w['kind']}", "Ostrzeżenie: " + w["text"],
+                ts, until=plus(ts, EVENT_DAYS) if event else None)
+    out = [a for a in out if not a["until"] or a["until"] >= today]  # historycznych nie pokazujemy
     rank = {"critical": 0, "warn": 1, "info": 2}
-    out.sort(key=lambda a: (rank[a["level"]], a["ticker"]))
+    out.sort(key=lambda a: (rank[a["level"]], -int((a["ts"] or "0000")[:10].replace("-", "")), a["ticker"]))
     return out
 
 
